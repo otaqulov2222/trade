@@ -1,0 +1,11 @@
+*.ex5
+*.ex4
+*.log
+*.clg
+*.opt
+*.set
+*.ini
+Tester/
+MQL5/Profiles/
+MQL5/Files/
+MQL5/Logs/
