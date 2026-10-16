@@ -424,4 +424,37 @@ bool XauEstimateMargin(const string symbol,
    return true;
 }
 
+bool XauUsdHighImpactNearby(const datetime now_time, const int minutes, string &reason)
+{
+   reason = "calendar_unavailable";
+   if(now_time <= 0 || minutes <= 0)
+      return true;
+
+   MqlCalendarValue values[];
+   const datetime from_time = now_time - (minutes * 60);
+   const datetime to_time = now_time + (minutes * 60);
+   const int copied = CalendarValueHistory(values, from_time, to_time);
+   if(copied < 0)
+      return true;
+
+   for(int i = 0; i < copied; ++i)
+   {
+      MqlCalendarEvent event_info;
+      if(!CalendarEventById(values[i].event_id, event_info))
+         continue;
+      if(event_info.importance != CALENDAR_IMPORTANCE_HIGH)
+         continue;
+      MqlCalendarCountry country;
+      if(!CalendarCountryById(event_info.country_id, country))
+         continue;
+      if(country.currency != "USD")
+         continue;
+      reason = "usd_high_impact";
+      return true;
+   }
+
+   reason = "calendar_clear";
+   return false;
+}
+
 #endif

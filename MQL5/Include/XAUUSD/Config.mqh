@@ -2,9 +2,9 @@
 #define XAU_CONFIG_MQH
 
 // Phase 1 research build. Chart inputs and terminal restarts cannot change these locks.
-const string XAU_EA_VERSION = "1.20";
+const string XAU_EA_VERSION = "1.30";
 const string XAU_PHASE_NAME = "phase1-research";
-const string XAU_LAYER_NAME = "phase3-regime";
+const string XAU_LAYER_NAME = "phase4-armed";
 const bool   XAU_PHASE1_LIVE_TRADING_ENABLED = false;
 const bool   XAU_PHASE1_MARTINGALE_ALLOWED = false;
 const bool   XAU_PHASE1_GRID_ALLOWED = false;

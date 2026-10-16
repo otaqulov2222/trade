@@ -745,9 +745,10 @@ bool XauSampleRegimeFeatures(const string symbol,
    ArrayResize(closes, copied);
    for(int i = 0; i < copied; ++i)
    {
-      highs[i] = rates[i].high;
-      lows[i] = rates[i].low;
-      closes[i] = rates[i].close;
+      const int source = copied - 1 - i;
+      highs[i] = rates[source].high;
+      lows[i] = rates[source].low;
+      closes[i] = rates[source].close;
    }
    features.close_price = closes[0];
    features.swing_bias = XauSwingBias(highs, lows, copied, params.swing_strength);
@@ -760,7 +761,7 @@ bool XauSampleRegimeFeatures(const string symbol,
       return false;
    }
    features.indicators_ready = true;
-   features.last_closed_m5 = rates[0].time;
+   features.last_closed_m5 = rates[copied - 1].time;
    reason = "ok";
    return true;
 }

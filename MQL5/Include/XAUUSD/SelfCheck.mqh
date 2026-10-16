@@ -494,6 +494,35 @@ bool XauRunPhase1SelfChecks(string &report)
    XauExpect(published.regime == XAU_REGIME_HIGH_VOLATILITY, "G11_safety_immediate", report, failures);
    XauExpect(XauRegimeParamsValid(regime_params, reason), "G12_params", report, failures);
 
+   XauExpect(XauSessionOpen(11) && XauSessionOpen(16) && !XauSessionOpen(14), "T01_session", report, failures);
+   XauExpect(XauM1DelaysEntry(true, 1, -1) && !XauM1DelaysEntry(true, 1, 1), "T02_m1_delay", report, failures);
+   XauExpect(XauCloseBreaksLevel(105.0, 100.0, 1) && !XauCloseBreaksLevel(100.0, 100.0, 1), "T03_bos", report, failures);
+   XauExpect(XauBullishFairValueGap(100.0, 101.0) && XauBearishFairValueGap(102.0, 100.0), "T04_fvg", report, failures);
+   XauExpect(XauBullishSweep(99.0, 101.0, 100.0) && !XauBullishSweep(99.0, 99.5, 100.0), "T05_sweep", report, failures);
+   XauExpect(XauCloseInsideFibBand(100.0, 110.0, 104.5, 1), "T06_fib", report, failures);
+   XauExpect(XauContextDirection(XAU_DIR_UP, XAU_DIR_UP, XAU_DIR_UP) == 1, "T07_context", report, failures);
+   XauExpect(XauContextDirection(XAU_DIR_UP, XAU_DIR_DOWN, XAU_DIR_UP) == 0, "T07_context_conflict", report, failures);
+
+   SXauEvidence setup_items[];
+   const int setup_count = XauAssembleSetupEvidence(1, true, false, true, false, true, false, setup_items);
+   signal = XauEvaluateSignal(false, false, false, false, false, setup_items, setup_count, 5, 3);
+   XauExpect(signal.state == XAU_SIGNAL_BUY && signal.buy_score == 7 && signal.buy_groups == 4, "T08_full_buy", report, failures);
+
+   string bind_reason = "";
+   XauExpect(!XauAccountBindingMatches(0, "Broker-Demo", 100, "Broker-Demo", bind_reason) && bind_reason == "login_not_set", "T09_login_missing", report, failures);
+   XauExpect(XauAccountBindingMatches(100, "Broker-Demo", 100, "Broker-Demo", bind_reason), "T09_login_match", report, failures);
+   XauExpect(!XauAccountBindingMatches(100, "Broker-Demo", 100, "Other", bind_reason), "T09_server_mismatch", report, failures);
+
+   string gate_reason = "";
+   XauExpect(!XauOrderGateAllows(false, true, true, 0, false, false, actionable, risk, gate_reason) && gate_reason == "arm_off", "T10_arm_off", report, failures);
+   XauExpect(!XauOrderGateAllows(true, true, true, 1, false, false, actionable, risk, gate_reason) && gate_reason == "position_already_open", "T10_one_position", report, failures);
+   XauExpect(XauOrderGateAllows(true, true, true, 0, false, false, actionable, risk, gate_reason), "T10_gate_open", report, failures);
+   double stop_loss = 0.0;
+   double take_profit = 0.0;
+   XauExpect(XauProtectivePrices(true, 1900.0, 1900.3, 3.0, 2.0, 2, stop_loss, take_profit)
+             && XauNear(stop_loss, 1897.0) && XauNear(take_profit, 1906.0), "T11_buy_protection", report, failures);
+   XauExpect(!XauProtectivePrices(false, 1900.0, 1900.3, 0.1, 2.0, 2, stop_loss, take_profit), "T11_sell_stop_inside_spread", report, failures);
+
    report += StringFormat("failures=%d", failures);
    return (failures == 0);
 }

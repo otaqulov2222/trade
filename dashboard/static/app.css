@@ -1,0 +1,174 @@
+:root {
+  color-scheme: dark;
+  --bg: #10140f;
+  --card: #1a2117;
+  --line: #31392a;
+  --text: #f4f1e6;
+  --muted: #b7b3a3;
+  --gold: #e2b657;
+  --green: #17321f;
+  --green-text: #b7e2a8;
+  --red: #d56b5d;
+  --warn: #e0a15a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.top, main {
+  width: 100%;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding-top: 18px;
+  padding-bottom: 12px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+h1, h2 { margin: 0; font-weight: 650; }
+h1 { font-size: 30px; }
+h2 { font-size: 18px; }
+
+.pills, .row, .controls, .split { display: flex; gap: 8px; }
+.pills { flex-wrap: wrap; justify-content: flex-end; }
+
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  background: #141910;
+}
+
+.pill.ok {
+  color: var(--green-text);
+  background: var(--green);
+  border-color: #3f7a49;
+  font-weight: 650;
+}
+
+.pill.warn { color: #2a1c0c; background: var(--warn); border-color: var(--warn); }
+.pill.bad { color: #2a100d; background: var(--red); border-color: var(--red); }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(280px, 340px);
+  gap: 12px;
+  padding-bottom: 16px;
+  align-items: stretch;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.note, .limits, .positions, #journal { color: var(--muted); }
+.note { font-size: 13px; line-height: 1.4; margin: 8px 0 0; }
+
+form { display: grid; gap: 8px; margin-top: 12px; }
+
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+
+input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #10140f;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.primary, .go { background: var(--gold); color: #231b09; font-weight: 650; }
+.stop { background: var(--red); color: #2a100d; }
+.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.row button, .controls button { flex: 1; }
+
+.analysis { display: flex; flex-direction: column; gap: 12px; }
+.split { justify-content: space-between; align-items: start; }
+.headline { font-size: 26px; margin: 6px 0 0; }
+
+.metrics, .votes {
+  display: grid;
+  gap: 8px;
+}
+
+.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.votes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.metric, .vote {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  min-height: 64px;
+}
+
+.metric span, .vote span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.metric strong, .vote strong { font-size: 16px; }
+
+.warning { margin: 0; color: var(--warn); font-size: 13px; }
+
+.facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  margin: 14px 0 0;
+}
+
+.facts div { display: contents; }
+.facts dt { color: var(--muted); font-size: 12px; }
+.facts dd { margin: 0; font-size: 15px; }
+
+.limits { margin: 8px 0 0; padding-left: 18px; line-height: 1.5; }
+.side { display: flex; flex-direction: column; gap: 8px; }
+.positions { min-height: 24px; }
+#journal {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 13px;
+}
+#journal li { margin-bottom: 6px; }
+
+@media (max-width: 1100px) {
+  .metrics, .votes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; }
+  .top { flex-direction: column; align-items: start; }
+}

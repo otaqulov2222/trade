@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oltin roboti</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">Oltin skalper</p>
+      <h1>Boshqaruv oynasi</h1>
+    </div>
+    <div class="pills">
+      <span id="pill-terminal" class="pill warn">Terminal yo'q</span>
+      <span id="pill-account" class="pill">Hisob ulanmagan</span>
+      <span id="pill-robot" class="pill bad">Robot to'xtagan</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card account">
+      <h2>Hisob</h2>
+      <p class="note">Login, server va parolni yozing. Parol faqat ulanishda terminalga beriladi, saqlanmaydi.</p>
+      <form id="connect-form">
+        <label>Login<input name="login" inputmode="numeric" autocomplete="off" required></label>
+        <label>Server<input name="server" autocomplete="off" required></label>
+        <label>Parol<input name="password" type="password" autocomplete="off" required></label>
+        <label>Belgi<input name="symbol" value="XAUUSDm" required></label>
+        <div class="row">
+          <button type="submit" class="primary">Hisobga ulash</button>
+          <button type="button" id="disconnect" class="ghost">Uzish</button>
+        </div>
+      </form>
+      <dl id="account-facts" class="facts"></dl>
+    </section>
+
+    <section class="card analysis">
+      <div class="split">
+        <div>
+          <h2>Tahlil</h2>
+          <p id="headline" class="headline">Ma'lumot kutilmoqda</p>
+          <p id="message" class="note"></p>
+        </div>
+        <div class="controls">
+          <button id="start" class="go" disabled>Robotni ishga tushirish</button>
+          <button id="stop" class="stop" disabled>To'xtatish</button>
+        </div>
+      </div>
+      <div id="metrics" class="metrics"></div>
+      <div id="votes" class="votes"></div>
+      <p class="warning">Yangilik kalendari ulanmagan. Yangilik xavfi tekshirilgan deb hisoblanmaydi.</p>
+    </section>
+
+    <section class="card side">
+      <h2>Xavf chegarasi</h2>
+      <ul class="limits">
+        <li>Bitim xavfi: kapitalning 0.25%</li>
+        <li>Kunlik zarar chegarasi: 1.5%</li>
+        <li>Cho'qqidan pasayish: 8%</li>
+        <li>Ochiq bitim yangi tasdiqni to'xtatmaydi</li>
+        <li>Lot hajmi oshirilmaydi</li>
+        <li>Zarar chegarasi: 1.5 ATR, maqsad: 2 baravar</li>
+      </ul>
+      <h2>Ochiq bitim</h2>
+      <div id="positions" class="positions">Hozircha yo'q</div>
+      <h2>Jurnal</h2>
+      <ol id="journal"></ol>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
