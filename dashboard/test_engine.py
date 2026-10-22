@@ -15,11 +15,14 @@ from engine import (
 
 class EngineTests(unittest.TestCase):
     def test_session_windows(self):
+        self.assertTrue(session_open(6))
         self.assertTrue(session_open(11))
         self.assertTrue(session_open(16))
         self.assertTrue(session_open(14))
-        self.assertFalse(session_open(7))
+        self.assertFalse(session_open(0))
         self.assertFalse(session_open(21))
+        self.assertFalse(session_open(10, weekday=5))
+        self.assertTrue(session_open(23, weekday=6))
 
     def test_rising_trend(self):
         bars = rising_bars(80, step=0.8)
@@ -47,10 +50,12 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "robot_stopped")
 
-    def test_open_positions_do_not_block(self):
-        allowed, reason = order_allowed(True, True, 100, "BUY", 0.01, False, False)
+    def test_open_positions_block_new_entry(self):
+        allowed, reason = order_allowed(True, True, 3, "BUY", 0.01, False, False)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "position_already_open")
+        allowed, reason = order_allowed(True, True, 2, "BUY", 0.01, False, False)
         self.assertTrue(allowed)
-        self.assertEqual(reason, "ok")
 
     def test_setup_buy_needs_three_groups(self):
         h1 = rising_bars(80, step=0.5)
@@ -60,6 +65,15 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(result["news_checked"])
         self.assertIn(result["signal"], {"BUY", "WAIT", "NO_TRADE"})
         self.assertEqual(result["direction"], "up")
+
+    def test_range_structure_can_buy(self):
+        h1 = rising_bars(80, start=100, step=0.02)
+        m15 = rising_bars(80, start=110, step=-0.02)
+        m5 = rising_bars(80, start=100, step=0.8)
+        result = analyze_setup(h1, m15, m5, [], 20, 50, 11, 0.01)
+        self.assertEqual(result["sell_groups"], 0)
+        if result["buy_score"] >= 2:
+            self.assertEqual(result["signal"], "BUY")
 
 
 if __name__ == "__main__":

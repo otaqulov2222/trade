@@ -3,26 +3,129 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Oltin roboti</title>
+  <title>Saydirasulov</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header class="top">
-    <div>
-      <p class="eyebrow">Oltin skalper</p>
-      <h1>Boshqaruv oynasi</h1>
-    </div>
-    <div class="pills">
-      <span id="pill-terminal" class="pill warn">Terminal yo'q</span>
-      <span id="pill-account" class="pill">Hisob ulanmagan</span>
-      <span id="pill-robot" class="pill bad">Robot to'xtagan</span>
-    </div>
-  </header>
+  <div class="shell">
+    <header class="top">
+      <div class="brand">
+        <h1>Saydirasulov</h1>
+        <p class="eyebrow">Muallif · Oltin robot</p>
+      </div>
+      <div class="account-strip" id="account-strip">
+        <div class="acc-cell"><span>Login</span><strong id="acc-login">—</strong></div>
+        <div class="acc-cell"><span>Server</span><strong id="acc-server">—</strong></div>
+        <div class="acc-cell"><span>Belgi</span><strong id="acc-symbol">—</strong></div>
+        <div class="acc-cell"><span>Balans</span><strong id="acc-balance">—</strong></div>
+        <div class="acc-cell"><span>Sof kapital</span><strong id="acc-equity">—</strong></div>
+        <div class="acc-cell"><span>Bo'sh marja</span><strong id="acc-margin">—</strong></div>
+      </div>
+      <div class="top-actions">
+        <time id="clock" class="clock">--:--:--</time>
+        <div class="pills">
+          <span id="pill-terminal" class="pill warn">Terminal yo'q</span>
+          <span id="pill-account" class="pill">Hisob ulanmagan</span>
+          <span id="pill-robot" class="pill bad">Saydirasulov to'xtagan</span>
+        </div>
+        <button type="button" id="open-settings" class="icon-btn" title="Sozlamalar" aria-label="Sozlamalar">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.05.24.26.42.49.42h3.8c.24 0 .44-.18.49.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96c.25.1.54 0 .68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
 
-  <main>
-    <section class="card account">
-      <h2>Hisob</h2>
-      <p class="note">Login, server va parolni yozing. Parol faqat ulanishda terminalga beriladi, saqlanmaydi.</p>
+    <section class="daybar" id="daybar">
+      <article class="day-card profit">
+        <span>Bugungi foyda</span>
+        <strong id="day-profit">+0.00</strong>
+      </article>
+      <article class="day-card loss">
+        <span>Bugungi minus</span>
+        <strong id="day-loss">0.00</strong>
+      </article>
+      <article class="day-card net">
+        <span>Kun sof natija</span>
+        <strong id="day-net">0.00</strong>
+      </article>
+      <article class="day-card float">
+        <span>Suzuvchi foyda</span>
+        <strong id="day-float">0.00</strong>
+      </article>
+      <article class="day-card sides">
+        <span>Ochiq tomonlar</span>
+        <div class="side-pills">
+          <em id="side-buy" class="tag buy">BUY 0</em>
+          <em id="side-sell" class="tag sell">SELL 0</em>
+          <em id="side-pending" class="tag pending">STOP 0</em>
+        </div>
+      </article>
+      <article class="day-card guard">
+        <span>Himoya</span>
+        <strong id="day-guard">tayyor</strong>
+        <em id="day-closed" class="sub">Yopilgan: 0</em>
+      </article>
+    </section>
+
+    <main>
+      <section class="panel analysis">
+        <div class="split">
+          <div>
+            <h2>Tahlil</h2>
+            <p id="headline" class="headline">Ma'lumot kutilmoqda</p>
+            <p id="message" class="note"></p>
+          </div>
+          <div class="controls">
+            <button id="start" class="go" disabled>Ishga tushirish</button>
+            <button id="stop" class="stop" disabled>To'xtatish</button>
+          </div>
+        </div>
+        <div id="metrics" class="metrics"></div>
+        <div id="votes" class="votes"></div>
+        <p class="warning">Yangilik kalendari ulanmagan. Yangilik xavfi alohida baholanmagan.</p>
+      </section>
+
+      <section class="panel book">
+        <div class="panel-head">
+          <h2>Ochiq bitimlar</h2>
+        </div>
+        <div id="positions" class="positions empty">Hozircha yo'q</div>
+      </section>
+
+      <section class="panel risk-panel">
+        <div class="panel-head">
+          <h2>Xavf</h2>
+        </div>
+        <ul id="limits" class="limits"></ul>
+      </section>
+    </main>
+
+    <section class="panel journal-dock">
+      <div class="panel-head tight-inline">
+        <h2>Jurnal</h2>
+      </div>
+      <ol id="journal"></ol>
+    </section>
+  </div>
+
+  <div id="settings-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-settings></div>
+    <section class="modal-card panel account" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-head">
+        <div class="panel-head">
+          <h2 id="settings-title">Hisob sozlamalari</h2>
+          <p>Parol faqat ulanishda ishlatiladi, saqlanmaydi.</p>
+        </div>
+        <button type="button" id="close-settings" class="icon-btn ghost-icon" title="Yopish" aria-label="Yopish">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M18.3 5.7a1 1 0 0 0-1.4 0L12 10.6 7.1 5.7a1 1 0 0 0-1.4 1.4L10.6 12l-4.9 4.9a1 1 0 1 0 1.4 1.4L12 13.4l4.9 4.9a1 1 0 0 0 1.4-1.4L13.4 12l4.9-4.9a1 1 0 0 0 0-1.4z"/>
+          </svg>
+        </button>
+      </div>
       <form id="connect-form">
         <label>Login<input name="login" inputmode="numeric" autocomplete="off" required></label>
         <label>Server<input name="server" autocomplete="off" required></label>
@@ -35,40 +138,8 @@
       </form>
       <dl id="account-facts" class="facts"></dl>
     </section>
+  </div>
 
-    <section class="card analysis">
-      <div class="split">
-        <div>
-          <h2>Tahlil</h2>
-          <p id="headline" class="headline">Ma'lumot kutilmoqda</p>
-          <p id="message" class="note"></p>
-        </div>
-        <div class="controls">
-          <button id="start" class="go" disabled>Robotni ishga tushirish</button>
-          <button id="stop" class="stop" disabled>To'xtatish</button>
-        </div>
-      </div>
-      <div id="metrics" class="metrics"></div>
-      <div id="votes" class="votes"></div>
-      <p class="warning">Yangilik kalendari ulanmagan. Yangilik xavfi tekshirilgan deb hisoblanmaydi.</p>
-    </section>
-
-    <section class="card side">
-      <h2>Xavf chegarasi</h2>
-      <ul class="limits">
-        <li>Bitim xavfi: kapitalning 0.25%</li>
-        <li>Kunlik zarar chegarasi: 1.5%</li>
-        <li>Cho'qqidan pasayish: 8%</li>
-        <li>Ochiq bitim yangi tasdiqni to'xtatmaydi</li>
-        <li>Lot hajmi oshirilmaydi</li>
-        <li>Zarar chegarasi: 1.5 ATR, maqsad: 2 baravar</li>
-      </ul>
-      <h2>Ochiq bitim</h2>
-      <div id="positions" class="positions">Hozircha yo'q</div>
-      <h2>Jurnal</h2>
-      <ol id="journal"></ol>
-    </section>
-  </main>
   <script src="/app.js"></script>
 </body>
 </html>

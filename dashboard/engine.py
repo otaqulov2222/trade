@@ -5,8 +5,16 @@ from __future__ import annotations
 import math
 
 
-def session_open(server_hour: int) -> bool:
-    return 8 <= server_hour < 20
+def session_open(server_hour: int, weekday: int | None = None) -> bool:
+    """XAUUSD liquid window in UTC. Skip the thin overnight print and the weekend."""
+    if weekday is not None:
+        if weekday == 5:
+            return False
+        if weekday == 6:
+            return server_hour >= 23
+        if weekday == 4 and server_hour >= 21:
+            return False
+    return 1 <= int(server_hour) < 21
 
 
 def ema(values: list[float], period: int) -> list[float | None]:
@@ -175,16 +183,30 @@ def analyze_setup(
     max_spread_points: float,
     server_hour: int,
     point_size: float,
+    weekday: int | None = None,
 ) -> dict:
+    from strategies import (
+        strategy_adx_trend,
+        strategy_ema_pullback,
+        strategy_ema_zone,
+        strategy_reversal_zone,
+        strategy_momentum,
+        strategy_order_block_reclaim,
+        strategy_session_impulse,
+        strategy_squeeze_break,
+    )
+
     reasons: list[str] = ["news_not_evaluated"]
     h1_dir = trend_direction(h1)
     m15_dir = trend_direction(m15)
     m5_dir = trend_direction(m5)
     m1_dir = trend_direction(m1, ema_period=min(50, max(5, len(m1) // 2 or 5))) if len(m1) >= 8 else 0
+    up_votes = (1 if h1_dir > 0 else 0) + (1 if m15_dir > 0 else 0) + (1 if m5_dir > 0 else 0)
+    down_votes = (1 if h1_dir < 0 else 0) + (1 if m15_dir < 0 else 0) + (1 if m5_dir < 0 else 0)
     context = 0
-    if h1_dir == 1 and m15_dir == 1 and m5_dir == 1:
+    if up_votes >= 2 and down_votes == 0:
         context = 1
-    elif h1_dir == -1 and m15_dir == -1 and m5_dir == -1:
+    elif down_votes >= 2 and up_votes == 0:
         context = -1
     else:
         reasons.append("timeframe_conflict_or_flat")
@@ -229,8 +251,13 @@ def analyze_setup(
         if low_a is not None:
             structure_down = closes[0] < low_a[1]
         if len(newest) >= 3:
-            structure_up = structure_up or highs[2] < lows[0]
-            structure_down = structure_down or lows[2] > highs[0]
+            body = abs(closes[0] - float(newest[0]["open"]))
+            bull_fvg = lows[0] > highs[2] and body > atr * 0.4
+            bear_fvg = highs[0] < lows[2] and body > atr * 0.4
+            if context >= 0 and bull_fvg:
+                structure_up = True
+            if context <= 0 and bear_fvg:
+                structure_down = True
         band = atr * 0.05
         if low_a is not None and low_b is not None and abs(low_a[1] - low_b[1]) <= band:
             pool = (low_a[1] + low_b[1]) * 0.5
@@ -248,19 +275,32 @@ def analyze_setup(
     buy_groups = 0
     sell_groups = 0
     votes: list[dict] = []
+    pro_buy = 0
+    pro_sell = 0
 
-    def add(name: str, direction: int, weight: int) -> None:
-        nonlocal buy_score, sell_score, buy_groups, sell_groups
+    def add(name: str, direction: int, weight: int, pro: bool = False) -> None:
+        nonlocal buy_score, sell_score, buy_groups, sell_groups, pro_buy, pro_sell
         if direction == 0 or weight <= 0:
-            votes.append({"name": name, "direction": "none", "weight": weight})
+            votes.append({"name": name, "direction": "none", "weight": weight, "pro": pro})
             return
-        votes.append({"name": name, "direction": "up" if direction > 0 else "down", "weight": weight})
+        votes.append(
+            {
+                "name": name,
+                "direction": "up" if direction > 0 else "down",
+                "weight": weight,
+                "pro": pro,
+            }
+        )
         if direction > 0:
             buy_score += weight
             buy_groups += 1
+            if pro:
+                pro_buy += 1
         else:
             sell_score += weight
             sell_groups += 1
+            if pro:
+                pro_sell += 1
 
     if context > 0:
         add("Trend H1/M15/M5", 1, 2)
@@ -268,15 +308,15 @@ def analyze_setup(
         add("Trend H1/M15/M5", -1, 2)
     else:
         add("Trend H1/M15/M5", 0, 2)
-    if structure_up and not structure_down:
+    if structure_up and not structure_down and context >= 0:
         add("Structure BOS/FVG", 1, 2)
-    elif structure_down and not structure_up:
+    elif structure_down and not structure_up and context <= 0:
         add("Structure BOS/FVG", -1, 2)
     else:
         add("Structure BOS/FVG", 0, 2)
-    if sweep_up and not sweep_down:
+    if sweep_up and not sweep_down and context >= 0:
         add("Liquidity sweep", 1, 2)
-    elif sweep_down and not sweep_up:
+    elif sweep_down and not sweep_up and context <= 0:
         add("Liquidity sweep", -1, 2)
     else:
         add("Liquidity sweep", 0, 2)
@@ -287,52 +327,146 @@ def analyze_setup(
     else:
         add("Fibonacci value", 0, 1)
 
+    # Professional strategy stack (selective, closed-bar only).
+    add("ADX trend strength", strategy_adx_trend(h1, m15, context), 2, True)
+    zone = strategy_ema_zone(m5, context, atr)
+    add("EMA zone", zone, 2, True)
+    add("Reversal zone", strategy_reversal_zone(m5, atr), 2, True)
+    add("EMA pullback", strategy_ema_pullback(m5, context, atr), 2, True)
+    squeeze = strategy_squeeze_break(m5, atr, baseline)
+    add("Squeeze breakout", squeeze, 2, True)
+    add("Session impulse", strategy_session_impulse(m15, m5, server_hour, context), 2, True)
+    add("Momentum RSI/MACD", strategy_momentum(m5, context), 1, True)
+    add("Order-block reclaim", strategy_order_block_reclaim(m5, context, atr), 2, True)
+
+    trigger_names = {
+        "Structure BOS/FVG",
+        "Liquidity sweep",
+        "Fibonacci value",
+        "EMA zone",
+        "EMA pullback",
+        "Squeeze breakout",
+        "Session impulse",
+        "Momentum RSI/MACD",
+        "Order-block reclaim",
+    }
+    trigger_buy = any(row["name"] in trigger_names and row["direction"] == "up" for row in votes)
+    trigger_sell = any(row["name"] in trigger_names and row["direction"] == "down" for row in votes)
+    pullback_names = {
+        "EMA zone",
+        "EMA pullback",
+        "Order-block reclaim",
+        "Fibonacci value",
+        "Liquidity sweep",
+    }
+    pullback_buy = any(row["name"] in pullback_names and row["direction"] == "up" for row in votes)
+    pullback_sell = any(row["name"] in pullback_names and row["direction"] == "down" for row in votes)
+    classic_buy = buy_groups >= 3 and buy_score >= 5 and sell_groups == 0
+    classic_sell = sell_groups >= 3 and sell_score >= 5 and buy_groups == 0
+    continuation_buy = (
+        context > 0 and sell_groups == 0 and buy_groups >= 2 and buy_score >= 4 and trigger_buy
+    )
+    continuation_sell = (
+        context < 0 and buy_groups == 0 and sell_groups >= 2 and sell_score >= 4 and trigger_sell
+    )
+    # Elite path: HTF context + at least 2 pro strategies + elevated score.
+    elite_buy = context > 0 and pro_buy >= 2 and buy_score >= 6 and sell_groups == 0 and buy_groups >= 3
+    elite_sell = context < 0 and pro_sell >= 2 and sell_score >= 6 and buy_groups == 0 and sell_groups >= 3
+    # Squeeze exception: breakout from compression with HTF or session confirmation.
+    squeeze_buy = (
+        squeeze > 0
+        and sell_groups == 0
+        and buy_score >= 4
+        and (context >= 0)
+        and (pro_buy >= 2 or (context > 0 and buy_groups >= 2))
+    )
+    squeeze_sell = (
+        squeeze < 0
+        and buy_groups == 0
+        and sell_score >= 4
+        and (context <= 0)
+        and (pro_sell >= 2 or (context < 0 and sell_groups >= 2))
+    )
+    active_buy = (
+        sell_groups == 0
+        and trigger_buy
+        and buy_score >= 2
+        and (context == 0 or (context > 0 and pullback_buy))
+    )
+    active_sell = (
+        buy_groups == 0
+        and trigger_sell
+        and sell_score >= 2
+        and (context == 0 or (context < 0 and pullback_sell))
+    )
+
+    blocked = False
     signal = "WAIT"
     if spread_points > max_spread_points:
         signal = "NO_TRADE"
         reasons.append("spread_wide")
-    elif volatility == "expanded":
-        signal = "WAIT"
+        blocked = True
+    elif volatility == "expanded" and context == 0:
         reasons.append("volatility_expanded")
-    elif volatility == "compressed":
-        signal = "WAIT"
+        blocked = True
+    elif volatility == "compressed" and not (squeeze_buy or squeeze_sell or active_buy or active_sell):
         reasons.append("volatility_compressed")
-    elif volatility != "normal":
+        blocked = True
+    elif volatility not in ("normal", "compressed"):
         signal = "NO_TRADE"
         reasons.append("volatility_invalid")
-    elif not session_open(server_hour):
-        signal = "WAIT"
+        blocked = True
+    elif not session_open(server_hour, weekday):
         reasons.append("session_closed")
+        blocked = True
     elif m1 and m1_dir != 0 and context != 0 and m1_dir != context:
-        signal = "WAIT"
         reasons.append("m1_delay")
-    elif buy_groups > 0 and sell_groups > 0:
-        signal = "NO_TRADE"
+
+    if not blocked and buy_groups > 0 and sell_groups > 0:
         reasons.append("directional_conflict")
-    elif buy_groups >= 3 and buy_score >= 5 and sell_groups == 0:
+    elif not blocked and (classic_buy or elite_buy or squeeze_buy or continuation_buy or active_buy):
         signal = "BUY"
-        reasons.append("buy_thresholds")
-    elif sell_groups >= 3 and sell_score >= 5 and buy_groups == 0:
+        if squeeze_buy and not classic_buy:
+            reasons.append("squeeze_breakout")
+        elif elite_buy and not classic_buy:
+            reasons.append("elite_pro_stack")
+        elif continuation_buy and not classic_buy:
+            reasons.append("htf_continuation")
+        elif active_buy and not classic_buy:
+            reasons.append("active_trigger")
+        else:
+            reasons.append("buy_thresholds")
+    elif not blocked and (classic_sell or elite_sell or squeeze_sell or continuation_sell or active_sell):
         signal = "SELL"
-        reasons.append("sell_thresholds")
-    elif context > 0 and sell_groups == 0:
-        signal = "BUY"
-        reasons.append("aligned_trend")
-    elif context < 0 and buy_groups == 0:
-        signal = "SELL"
-        reasons.append("aligned_trend")
-    else:
-        reasons.append("insufficient_evidence")
+        if squeeze_sell and not classic_sell:
+            reasons.append("squeeze_breakout")
+        elif elite_sell and not classic_sell:
+            reasons.append("elite_pro_stack")
+        elif continuation_sell and not classic_sell:
+            reasons.append("htf_continuation")
+        elif active_sell and not classic_sell:
+            reasons.append("active_trigger")
+        else:
+            reasons.append("sell_thresholds")
+    elif not blocked:
+        if context != 0 and (buy_groups > 0 or sell_groups > 0):
+            reasons.append("weak_confluence")
+        else:
+            reasons.append("insufficient_evidence")
 
     regime = "UNCERTAIN"
     if signal == "NO_TRADE" and "spread_wide" in reasons:
         regime = "LOW_LIQUIDITY"
     elif volatility == "expanded":
         regime = "HIGH_VOLATILITY"
+    elif squeeze != 0 and signal in ("BUY", "SELL"):
+        regime = "BREAKOUT_CANDIDATE"
     elif context > 0 and "timeframe_conflict_or_flat" not in reasons:
         regime = "TRENDING_UP"
     elif context < 0 and "timeframe_conflict_or_flat" not in reasons:
         regime = "TRENDING_DOWN"
+    elif volatility == "compressed":
+        regime = "SQUEEZE"
     elif volatility == "normal" and context == 0:
         regime = "RANGING"
 
@@ -340,6 +474,10 @@ def analyze_setup(
     if context > 0:
         direction = "up"
     elif context < 0:
+        direction = "down"
+    elif squeeze > 0:
+        direction = "up"
+    elif squeeze < 0:
         direction = "down"
 
     return {
@@ -349,16 +487,20 @@ def analyze_setup(
         "volatility": volatility,
         "atr": atr,
         "spread_points": spread_points,
-        "session_open": session_open(server_hour),
+        "session_open": session_open(server_hour, weekday),
         "buy_score": buy_score,
         "sell_score": sell_score,
         "buy_groups": buy_groups,
         "sell_groups": sell_groups,
+        "pro_buy": pro_buy,
+        "pro_sell": pro_sell,
         "votes": votes,
         "reasons": reasons,
         "news_checked": False,
         "point_size": point_size,
         "last_m5_time": int(m5[-1]["time"]) if m5 else 0,
+        "m1_dir": m1_dir,
+        "strategies": "confluence+pro",
     }
 
 
@@ -366,13 +508,15 @@ def protective_prices(is_buy: bool, bid: float, ask: float, stop_distance: float
     if bid <= 0 or ask < bid or stop_distance <= 0 or reward <= 0:
         return None
     if is_buy:
-        stop_loss = bid - stop_distance
-        take_profit = bid + stop_distance * reward
+        entry = ask
+        stop_loss = entry - stop_distance
+        take_profit = entry + stop_distance * reward
         if stop_loss <= 0 or stop_loss >= bid or take_profit <= ask:
             return None
         return stop_loss, take_profit
-    stop_loss = ask + stop_distance
-    take_profit = ask - stop_distance * reward
+    entry = bid
+    stop_loss = entry + stop_distance
+    take_profit = entry - stop_distance * reward
     if stop_loss <= ask or take_profit <= 0 or take_profit >= bid:
         return None
     return stop_loss, take_profit
@@ -395,6 +539,8 @@ def order_allowed(
         return False, "daily_loss"
     if hard_stop:
         return False, "hard_drawdown"
+    if open_positions >= 3:
+        return False, "position_already_open"
     if signal not in ("BUY", "SELL"):
         return False, "signal_not_actionable"
     if volume <= 0:
