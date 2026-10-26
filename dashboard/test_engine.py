@@ -5,6 +5,7 @@ from engine import (
     analyze_setup,
     close_inside_fib,
     floor_volume,
+    m1_burst,
     order_allowed,
     position_volume,
     rising_bars,
@@ -23,6 +24,20 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(session_open(21))
         self.assertFalse(session_open(10, weekday=5))
         self.assertTrue(session_open(23, weekday=6))
+
+    def test_m1_burst_follows_last_candles(self):
+        up = [
+            {"open": 10.0, "close": 10.2, "high": 10.3, "low": 9.9, "time": 1},
+            {"open": 10.2, "close": 10.4, "high": 10.5, "low": 10.1, "time": 2},
+            {"open": 10.4, "close": 10.6, "high": 10.7, "low": 10.3, "time": 3},
+        ]
+        down = [
+            {"open": 10.6, "close": 10.4, "high": 10.7, "low": 10.3, "time": 1},
+            {"open": 10.4, "close": 10.2, "high": 10.5, "low": 10.1, "time": 2},
+            {"open": 10.2, "close": 10.0, "high": 10.3, "low": 9.9, "time": 3},
+        ]
+        self.assertEqual(m1_burst(up), 1)
+        self.assertEqual(m1_burst(down), -1)
 
     def test_rising_trend(self):
         bars = rising_bars(80, step=0.8)

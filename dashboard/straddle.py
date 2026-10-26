@@ -15,11 +15,14 @@ MAX_SPREAD = 50 * GOLD_POINT
 LOT = 0.01
 LOT_SWING = 0.05
 LOT_SCALP = 0.01
-REVERSE_DISTANCE = 45 * GOLD_POINT
+REVERSE_DISTANCE = 28 * GOLD_POINT
+SCALP_STOP = 35 * GOLD_POINT
+SCALP_BANK = 25 * GOLD_POINT
+SCALP_BE = 20 * GOLD_POINT
 COOLDOWN_SECONDS = 0
-LOSS_PAUSE_SECONDS = 0
-MAX_CONSEC_LOSSES = 99
-MAX_DAILY_TRADES = 100
+LOSS_PAUSE_SECONDS = 90
+MAX_CONSEC_LOSSES = 2
+MAX_DAILY_TRADES = 20
 MAX_SAME_SIDE = 2
 BREAK_EVEN = 50 * GOLD_POINT
 DISTANCE = HARD_STOP
@@ -35,6 +38,90 @@ def normalize(price: float, tick: float, digits: int) -> float:
 
 def gap(distance: float, min_stop: float) -> float:
     return max(distance, min_stop)
+
+
+def break_even_stop(side: str, entry: float, bid: float, ask: float, trigger: float, min_stop: float) -> float | None:
+    """Move SL to entry-plus-spread once price has paid for the spread."""
+    if entry <= 0:
+        return None
+    spread = max(0.0, ask - bid)
+    if side == "BUY":
+        profit = bid - entry
+        if profit + 1e-9 < trigger:
+            return None
+        stop = entry + max(0.02, spread)
+        if stop >= bid - max(min_stop, spread):
+            return None
+        return stop
+    if side == "SELL":
+        profit = entry - ask
+        if profit + 1e-9 < trigger:
+            return None
+        stop = entry - max(0.02, spread)
+        if stop <= ask + max(min_stop, spread):
+            return None
+        return stop
+    return None
+
+
+def trailing_lock_stop(side: str, bid: float, ask: float, trail_gap: float, min_stop: float) -> float | None:
+    spread = max(0.0, ask - bid)
+    gap = max(trail_gap, min_stop, spread)
+    if side == "BUY":
+        stop = bid - gap
+        if stop <= 0 or stop >= bid - max(min_stop, spread):
+            return None
+        return stop
+    if side == "SELL":
+        stop = ask + gap
+        if stop <= ask + max(min_stop, spread):
+            return None
+        return stop
+    return None
+
+
+def tighter_stop(side: str, current: float, candidate: float, step: float) -> float | None:
+    if candidate is None or candidate <= 0:
+        return None
+    if current <= 0:
+        return candidate
+    if side == "BUY" and candidate > current + step:
+        return candidate
+    if side == "SELL" and candidate + step < current:
+        return candidate
+    return None
+
+
+def pick_lock_stop(
+    side: str,
+    entry: float,
+    bid: float,
+    ask: float,
+    current: float,
+    trigger: float,
+    trail_gap: float,
+    min_stop: float,
+    step: float,
+) -> float | None:
+    if side == "BUY":
+        profit = bid - entry
+    elif side == "SELL":
+        profit = entry - ask
+    else:
+        return None
+    be = break_even_stop(side, entry, bid, ask, trigger, min_stop)
+    trail = None
+    if profit + 1e-9 >= trigger + 0.15:
+        trail = trailing_lock_stop(side, bid, ask, trail_gap, min_stop)
+    want = be
+    if trail is not None:
+        if want is None:
+            want = trail
+        elif side == "BUY":
+            want = max(want, trail)
+        else:
+            want = min(want, trail)
+    return tighter_stop(side, current, want, step)
 
 
 def adaptive_trail_distance(profit: float, atr: float) -> float | None:

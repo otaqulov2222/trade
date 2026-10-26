@@ -1,15 +1,19 @@
 import unittest
 
 from straddle import (
+    BREAK_EVEN,
     HARD_STOP,
     LOT_SCALP,
     LOT_SWING,
     REVERSE_DISTANCE,
+    SCALP_BANK,
+    SCALP_BE,
     TAKE_PROFIT,
     adaptive_trail_distance,
     book_role,
     lock_take_profit,
     original_position,
+    pick_lock_stop,
     position_stop,
     reverse_should_move,
     reverse_stop_price,
@@ -57,6 +61,25 @@ class ProtectionTests(unittest.TestCase):
         self.assertIsNotNone(early)
         self.assertIsNotNone(later)
         self.assertGreater(later, early)
+
+    def test_sell_moves_to_break_even_in_profit(self):
+        stop = pick_lock_stop("SELL", 4014.802, 4013.45, 4013.69, 4016.602, BREAK_EVEN, 0.80, 0.05, 0.05)
+        self.assertIsNotNone(stop)
+        self.assertLess(stop, 4014.802)
+        self.assertGreater(stop, 4013.69)
+
+    def test_buy_break_even_above_entry(self):
+        stop = pick_lock_stop("BUY", 4012.169, 4013.00, 4013.24, 4010.369, BREAK_EVEN, 0.80, 0.05, 0.05)
+        self.assertIsNotNone(stop)
+        self.assertGreater(stop, 4012.169)
+
+    def test_small_profit_does_not_move_stop(self):
+        stop = pick_lock_stop("SELL", 4014.802, 4014.50, 4014.70, 4016.602, BREAK_EVEN, 0.80, 0.05, 0.05)
+        self.assertIsNone(stop)
+
+    def test_scalp_banks_small_profit(self):
+        self.assertGreater(SCALP_BANK, 0.0)
+        self.assertLessEqual(SCALP_BANK, 0.35)
 
     def test_book_role_splits_swing_and_scalp(self):
         self.assertEqual(book_role({"comment": "sd-swing", "volume": 0.05}), "swing")

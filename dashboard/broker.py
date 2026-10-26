@@ -89,8 +89,31 @@ class Broker:
         if self.mt5 is not None:
             self.mt5.shutdown()
 
+    def ensure_alive(self) -> bool:
+        if self.mt5 is None:
+            self.connected = False
+            return False
+        info = self.mt5.account_info()
+        tick = self.mt5.symbol_info_tick(self.symbol) if self.symbol else None
+        if info is not None and tick is not None:
+            self.connected = True
+            return True
+        if not self.terminal_path:
+            self.connected = False
+            return False
+        if not self.mt5.initialize(path=self.terminal_path, timeout=20000):
+            self.connected = False
+            return False
+        if self.symbol:
+            self.mt5.symbol_select(self.symbol, True)
+        info = self.mt5.account_info()
+        self.connected = info is not None
+        return self.connected
+
     def account_snapshot(self) -> dict:
-        if not self.connected or self.mt5 is None:
+        if self.mt5 is None:
+            return {}
+        if not self.ensure_alive():
             return {}
         info = self.mt5.account_info()
         if info is None:
@@ -160,10 +183,13 @@ class Broker:
         return bars
 
     def positions(self, magic: int) -> list[dict]:
-        if not self.connected or self.mt5 is None:
+        if self.mt5 is None or not self.ensure_alive():
             return []
         rows = self.mt5.positions_get(symbol=self.symbol)
         if rows is None:
+            rows = self.mt5.positions_get() or []
+            rows = [row for row in rows if str(row.symbol) == self.symbol]
+        if not rows:
             return []
         out = []
         for row in rows:
@@ -184,7 +210,7 @@ class Broker:
         return out
 
     def trade_quote(self) -> dict | None:
-        if not self.connected or self.mt5 is None:
+        if self.mt5 is None or not self.ensure_alive():
             return None
         mt5 = self.mt5
         tick = mt5.symbol_info_tick(self.symbol)
@@ -193,16 +219,23 @@ class Broker:
         if tick is None or info is None or terminal is None:
             return None
         point = float(info.point) or 0.001
+        tick_size = float(info.trade_tick_size) or point
+        contract = float(getattr(info, "trade_contract_size", 0) or 0) or 100.0
+        tick_value = float(getattr(info, "trade_tick_value", 0) or 0) or (contract * tick_size)
         return {
             "bid": float(tick.bid),
             "ask": float(tick.ask),
             "time": int(tick.time),
             "point": point,
             "digits": int(info.digits),
-            "tick": float(info.trade_tick_size) or point,
+            "tick": tick_size,
+            "tick_value": tick_value,
+            "contract": contract,
             "stops": float(info.trade_stops_level) * point,
             "freeze": float(info.trade_freeze_level) * point,
             "volume_min": float(info.volume_min),
+            "volume_max": float(info.volume_max) or 100.0,
+            "volume_step": float(info.volume_step) or 0.01,
             "trade_allowed": bool(terminal.trade_allowed),
         }
 
@@ -252,7 +285,10 @@ class Broker:
         account = self.account_snapshot()
         equity = float(account.get("equity") or 0.0)
         start_eq = float(day_start_equity) if day_start_equity is not None else equity
-        net = equity - start_eq if day_start_equity is not None else realized + floating
+        if equity > 0 and day_start_equity is not None:
+            net = equity - start_eq
+        else:
+            net = realized + floating
         return {
             "day_profit": round(wins, 2),
             "day_loss": round(losses, 2),

@@ -48,6 +48,31 @@ def wilder_atr(bars: list[dict], period: int = 14) -> float | None:
     return atr
 
 
+def m1_burst(bars: list[dict]) -> int:
+    """Fast M1 side from the last three candles. Used for razgon scalping."""
+    if len(bars) < 3:
+        return 0
+    score = 0
+    for bar in bars[-3:]:
+        close = float(bar["close"])
+        opened = float(bar["open"])
+        if close > opened:
+            score += 1
+        elif close < opened:
+            score -= 1
+    if score > 0:
+        return 1
+    if score < 0:
+        return -1
+    last = float(bars[-1]["close"])
+    prev = float(bars[-2]["close"])
+    if last > prev:
+        return 1
+    if last < prev:
+        return -1
+    return 0
+
+
 def trend_direction(bars: list[dict], ema_period: int = 50, slope_bars: int = 3) -> int:
     if len(bars) < ema_period + slope_bars:
         return 0
@@ -201,6 +226,7 @@ def analyze_setup(
     m15_dir = trend_direction(m15)
     m5_dir = trend_direction(m5)
     m1_dir = trend_direction(m1, ema_period=min(50, max(5, len(m1) // 2 or 5))) if len(m1) >= 8 else 0
+    m1_fast = m1_burst(m1) if m1 else 0
     up_votes = (1 if h1_dir > 0 else 0) + (1 if m15_dir > 0 else 0) + (1 if m5_dir > 0 else 0)
     down_votes = (1 if h1_dir < 0 else 0) + (1 if m15_dir < 0 else 0) + (1 if m5_dir < 0 else 0)
     context = 0
@@ -349,6 +375,8 @@ def analyze_setup(
         "Session impulse",
         "Momentum RSI/MACD",
         "Order-block reclaim",
+        "Reversal zone",
+        "ADX trend strength",
     }
     trigger_buy = any(row["name"] in trigger_names and row["direction"] == "up" for row in votes)
     trigger_sell = any(row["name"] in trigger_names and row["direction"] == "down" for row in votes)
@@ -500,6 +528,7 @@ def analyze_setup(
         "point_size": point_size,
         "last_m5_time": int(m5[-1]["time"]) if m5 else 0,
         "m1_dir": m1_dir,
+        "m1_fast": m1_fast,
         "strategies": "confluence+pro",
     }
 
@@ -520,6 +549,89 @@ def protective_prices(is_buy: bool, bid: float, ask: float, stop_distance: float
     if stop_loss <= ask or take_profit <= 0 or take_profit >= bid:
         return None
     return stop_loss, take_profit
+
+
+def equity_lot_cap(equity: float) -> float:
+    """Hard ceiling so a $1k gold book cannot open 0.50/1.00."""
+    if equity < 1200:
+        return 0.05
+    if equity < 2500:
+        return 0.10
+    if equity < 5000:
+        return 0.25
+    if equity < 10000:
+        return 0.50
+    return 1.00
+
+
+def setup_grade(analysis: dict) -> str:
+    signal = analysis.get("signal")
+    if signal not in ("BUY", "SELL"):
+        return "skip"
+    buy = signal == "BUY"
+    score = int((analysis.get("buy_score") if buy else analysis.get("sell_score")) or 0)
+    groups = int((analysis.get("buy_groups") if buy else analysis.get("sell_groups")) or 0)
+    pro = int((analysis.get("pro_buy") if buy else analysis.get("pro_sell")) or 0)
+    opposite = int((analysis.get("sell_groups") if buy else analysis.get("buy_groups")) or 0)
+    regime = str(analysis.get("regime") or "")
+    if opposite > 0:
+        return "skip"
+    trending = regime in ("TRENDING_UP", "TRENDING_DOWN", "BREAKOUT_CANDIDATE")
+    if trending and pro >= 2 and score >= 6 and groups >= 3:
+        return "elite"
+    if trending and score >= 4 and groups >= 2:
+        return "swing"
+    if score >= 2:
+        return "scalp"
+    return "skip"
+
+
+def decide_lot(
+    equity: float,
+    grade: str,
+    stop_distance: float,
+    tick_size: float,
+    tick_value: float,
+    volume_min: float,
+    volume_max: float,
+    volume_step: float,
+    news_block: bool = False,
+    news_near: bool = False,
+    consec_losses: int = 0,
+) -> tuple[float, str, str]:
+    if news_block or grade == "skip":
+        return 0.0, "skip", grade
+    used = grade
+    risk = {"scalp": 0.30, "swing": 0.60, "elite": 0.90}.get(grade, 0.0)
+    if news_near:
+        risk *= 0.45
+        used = "scalp"
+    if consec_losses >= 2:
+        risk *= 0.5
+    cap = equity_lot_cap(equity)
+    if used == "scalp":
+        cap = min(cap, 0.02 if equity < 2500 else 0.05)
+    elif used == "swing":
+        cap = min(cap, 0.10 if equity < 5000 else cap)
+    vmax = min(volume_max, cap)
+    volume, reason = position_volume(
+        equity,
+        risk,
+        stop_distance,
+        tick_size,
+        tick_value,
+        volume_min,
+        vmax,
+        volume_step,
+    )
+    if volume > 0 and volume + 1e-12 < volume_min:
+        return 0.0, "min_lot", used
+    if volume <= 0 and reason == "min_lot":
+        tiny = min(volume_min, cap)
+        if tiny > 0 and used == "scalp":
+            return tiny, "floor_min", used
+        return 0.0, reason, used
+    return volume, reason, used
 
 
 def order_allowed(

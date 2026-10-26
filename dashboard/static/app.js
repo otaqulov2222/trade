@@ -34,13 +34,6 @@ function signed(value) {
   return num > 0 ? `+${text}` : num < 0 ? `-${text}` : text;
 }
 
-function pnlClass(value) {
-  const num = Number(value) || 0;
-  if (num > 0) return "up";
-  if (num < 0) return "down";
-  return "";
-}
-
 const WORDS = {
   RANGING: "Yonlama",
   WAIT: "Kutilmoqda",
@@ -88,22 +81,23 @@ function uz(value) {
 }
 
 function pill(node, text, kind) {
-  node.textContent = text;
   node.className = "pill " + (kind || "");
+  node.replaceChildren();
+  const dot = document.createElement("i");
+  dot.className = "dot";
+  node.append(dot, document.createTextNode(text));
 }
 
 function setMoney(id, value, withSign) {
   const node = document.querySelector(id);
   const num = Number(value) || 0;
   node.textContent = withSign ? signed(num) : money(Math.abs(num));
-  node.className = pnlClass(num);
 }
 
 function renderDay(day) {
   const data = day || {};
   setMoney("#day-profit", data.day_profit || 0, true);
   document.querySelector("#day-loss").textContent = money(data.day_loss || 0);
-  document.querySelector("#day-loss").className = (data.day_loss || 0) > 0 ? "down" : "";
   setMoney("#day-net", data.day_net || 0, true);
   setMoney("#day-float", data.floating || 0, true);
 
@@ -141,20 +135,22 @@ function renderRisk(risk) {
     <li class="risk-item"><span>Break-even</span><strong>${escapeHtml(data.break_even == null ? "—" : Number(data.break_even).toFixed(2))}</strong></li>
     <li class="risk-item"><span>Lot swing</span><strong>${escapeHtml(data.lot_swing == null ? "0.05" : Number(data.lot_swing).toFixed(2))}</strong></li>
     <li class="risk-item"><span>Lot M1</span><strong>${escapeHtml(data.lot_scalp == null ? "0.01" : Number(data.lot_scalp).toFixed(2))}</strong></li>
+    <li class="risk-item"><span>Lot tavan</span><strong>${escapeHtml(data.lot_cap == null ? "—" : Number(data.lot_cap).toFixed(2))}</strong></li>
+    <li class="risk-item"><span>Signal daraja</span><strong>${escapeHtml(data.grade || "skip")}</strong></li>
     <li class="risk-item"><span>Teskari masofa</span><strong>${escapeHtml(data.reverse_distance == null ? "—" : Number(data.reverse_distance).toFixed(2))}</strong></li>
     <li class="risk-item"><span>Kunlik zarar</span><strong>${escapeHtml(String(data.daily_loss_percent ?? "—"))}%</strong></li>
     <li class="risk-item"><span>Ketma-ket zarar</span><strong>${escapeHtml(`${data.consec_losses ?? 0} / ${data.max_consec_losses ?? 2}`)}</strong></li>
     <li class="risk-item"><span>Sessiya bitimlari</span><strong>${escapeHtml(`${data.session_trades ?? 0} / ${data.max_daily_trades ?? 20}`)}</strong></li>
     <li class="risk-item"><span>Pauza</span><strong>${escapeHtml(cool > 0 ? `${cool}s` : "yo'q")}</strong></li>
     <li class="risk-item"><span>Pro stack</span><strong>${escapeHtml(`${data.pro_buy ?? 0} / ${data.pro_sell ?? 0}`)}</strong></li>
-    <li class="risk-note">Uzoq bitim 0.05. M1 0.01 tez ishlaydi. Foydada teskari STOP qo'yiladi, u olsa asl bitim yopiladi.</li>
+    <li class="risk-note">Lot 0.01 / 0.05 / 0.50 / 1.00 faqat equity va signal kuchiga qarab. $1k da 0.50–1.00 ochilmaydi. CPI/PPI/NFP/FOMC oldidan yangi bitim yo'q.</li>
   `;
 }
 
 function tradeCard(item) {
   const isBuy = item.type === "BUY" || item.type === "BUY_STOP";
   const isSell = item.type === "SELL" || item.type === "SELL_STOP";
-  const kind = item.pending ? "pending" : isBuy ? "buy" : isSell ? "sell" : "pending";
+  const kind = [isBuy ? "buy" : "", isSell ? "sell" : "", item.pending ? "pending" : ""].filter(Boolean).join(" ") || "pending";
   const comment = String(item.comment || "");
   const vol = Number(item.volume) || 0;
   let owner = item.owner === "qolda" ? "Qo'lda" : "Saydirasulov";
@@ -186,7 +182,7 @@ function tradeCard(item) {
         <div><span>Lot</span><strong>${escapeHtml(Number(item.volume).toFixed(2))}</strong></div>
         <div><span>${item.pending ? "Buyruq" : "Ochilish"}</span><strong>${escapeHtml(money(item.price_open))}</strong></div>
         <div><span>${stopLabel}</span><strong class="${hasStop || item.pending ? "" : "warn-text"}">${escapeHtml(stopValue)}</strong></div>
-        <div><span>${item.pending ? "Holat" : "Foyda"}</span><strong class="${item.pending ? "" : `pnl ${pnlClass(profit)}`}">${escapeHtml(item.pending ? status : signed(profit))}</strong></div>
+        <div><span>${item.pending ? "Holat" : "Foyda"}</span><strong class="${item.pending ? "" : "pnl"}">${escapeHtml(item.pending ? status : signed(profit))}</strong></div>
       </div>
       ${item.pending ? "" : `<p class="trade-status">${escapeHtml(status)}</p>`}
     </article>
@@ -197,17 +193,17 @@ function render(state) {
   pill(
     document.querySelector("#pill-terminal"),
     state.mt5_available ? "Terminal tayyor" : "Terminal yo'q",
-    state.mt5_available ? "ok" : "warn"
+    state.mt5_available ? "live" : "warn"
   );
   pill(
     document.querySelector("#pill-account"),
     state.connected ? "Hisob ulangan" : "Hisob ulanmagan",
-    state.connected ? "ok" : ""
+    state.connected ? "live" : "idle"
   );
   pill(
     document.querySelector("#pill-robot"),
     state.running ? "Saydirasulov ishlayapti" : "Saydirasulov to'xtagan",
-    state.running ? "ok" : "bad"
+    state.running ? "live" : "idle"
   );
 
   startButton.disabled = !state.connected || state.running;
@@ -240,7 +236,11 @@ function render(state) {
     .join("");
 
   const analysis = state.analysis || {};
-  document.querySelector("#headline").textContent = `${uz(analysis.regime)} · ${uz(analysis.signal)}`;
+  const signal = analysis.signal;
+  document.querySelector("#headline-regime").textContent = uz(analysis.regime);
+  const signalNode = document.querySelector("#headline-signal");
+  signalNode.textContent = signal ? uz(signal) : "";
+  signalNode.className = `sig${signal === "BUY" ? " buy" : signal === "SELL" ? " sell" : ""}`;
   document.querySelector("#message").textContent = uz(state.message || "");
   const metrics = [
     ["Yo'nalish", uz(analysis.direction)],
@@ -252,6 +252,7 @@ function render(state) {
     ["Ball", `${analysis.buy_score || 0} / ${analysis.sell_score || 0}`],
     ["Pro", `${analysis.pro_buy || 0} / ${analysis.pro_sell || 0}`],
     ["Holat", uz(analysis.gate)],
+    ["Daraja", analysis.grade || "skip"],
   ];
   document.querySelector("#metrics").innerHTML = metrics
     .map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`)
@@ -266,6 +267,8 @@ function render(state) {
 
   const positions = state.positions || [];
   const positionBox = document.querySelector("#positions");
+  const posCount = document.querySelector("#pos-count");
+  if (posCount) posCount.textContent = String(positions.length);
   if (!positions.length) {
     positionBox.className = "positions empty";
     positionBox.textContent = "Hozircha yo'q";
@@ -275,6 +278,30 @@ function render(state) {
   }
   document.querySelector("#journal").innerHTML = (state.journal || [])
     .map((line) => `<li>${escapeHtml(line)}</li>`)
+    .join("");
+  renderNews(state.news || {}, analysis);
+}
+
+function renderNews(news, analysis) {
+  const status = document.querySelector("#news-status");
+  const list = document.querySelector("#news-list");
+  if (!status || !list) return;
+  const sources = (news.sources || []).join(" + ") || "kutilmoqda";
+  if (news.block) status.textContent = news.reason || "Yangilik. Yangi bitim yopiq";
+  else if (news.nearby) status.textContent = `Yaqin yangilik. Lot kichraytirildi. Manba: ${sources}`;
+  else if (news.checked) status.textContent = `Kalendar ulangan (${sources}). CPI/PPI/NFP/FOMC hisobga olinadi.`;
+  else status.textContent = "Yangilik kalendari yuklanmoqda…";
+  const events = news.events || analysis.news_events || [];
+  list.innerHTML = events
+    .slice(0, 6)
+    .map((row) => {
+      const mins = Number(row.minutes);
+      const when = Number.isFinite(mins)
+        ? (mins >= 0 ? `${mins} daqiqa` : `${Math.abs(mins)} daqiqa oldin`)
+        : "";
+      const tone = row.impact === "High" ? "high" : "";
+      return `<li class="${tone}"><span><strong>${escapeHtml(row.currency || "")}</strong> ${escapeHtml(row.title || "")}</span><em>${escapeHtml(row.impact || "")} ${escapeHtml(when)}</em></li>`;
+    })
     .join("");
 }
 
