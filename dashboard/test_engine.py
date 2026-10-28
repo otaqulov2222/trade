@@ -6,6 +6,7 @@ from engine import (
     close_inside_fib,
     floor_volume,
     m1_burst,
+    m1_candle_side,
     order_allowed,
     position_volume,
     rising_bars,
@@ -66,11 +67,16 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(reason, "robot_stopped")
 
     def test_open_positions_block_new_entry(self):
-        allowed, reason = order_allowed(True, True, 3, "BUY", 0.01, False, False)
+        allowed, reason = order_allowed(True, True, 1, "BUY", 0.01, False, False)
         self.assertFalse(allowed)
         self.assertEqual(reason, "position_already_open")
-        allowed, reason = order_allowed(True, True, 2, "BUY", 0.01, False, False)
+        allowed, reason = order_allowed(True, True, 0, "BUY", 0.01, False, False)
         self.assertTrue(allowed)
+
+    def test_daily_target_blocks_new_entry(self):
+        allowed, reason = order_allowed(True, True, 0, "BUY", 0.01, False, False, True)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "daily_target")
 
     def test_setup_buy_needs_three_groups(self):
         h1 = rising_bars(80, step=0.5)
@@ -81,14 +87,60 @@ class EngineTests(unittest.TestCase):
         self.assertIn(result["signal"], {"BUY", "WAIT", "NO_TRADE"})
         self.assertEqual(result["direction"], "up")
 
-    def test_range_structure_can_buy(self):
+    def test_range_conflict_without_pro_stays_skip(self):
+        from engine import profit_to_distance, setup_grade
+
+        self.assertAlmostEqual(profit_to_distance(70, 0.05, 0.01, 1.0), 14.0)
+        self.assertEqual(
+            setup_grade(
+                {
+                    "signal": "BUY",
+                    "buy_score": 3,
+                    "sell_groups": 0,
+                    "buy_groups": 2,
+                    "pro_buy": 0,
+                    "regime": "RANGING",
+                    "direction": "flat",
+                }
+            ),
+            "skip",
+        )
+        self.assertEqual(
+            setup_grade(
+                {
+                    "signal": "BUY",
+                    "buy_score": 2,
+                    "sell_groups": 0,
+                    "buy_groups": 1,
+                    "pro_buy": 1,
+                    "regime": "RANGING",
+                    "direction": "flat",
+                }
+            ),
+            "skip",
+        )
+
+    def test_m1_candle_side_reads_last_body(self):
+        self.assertEqual(m1_candle_side([{"open": 10.0, "close": 10.2, "high": 10.3, "low": 9.9}]), 1)
+        self.assertEqual(m1_candle_side([{"open": 10.2, "close": 10.0, "high": 10.3, "low": 9.9}]), -1)
+        self.assertEqual(m1_candle_side([{"open": 10.0, "close": 10.01, "high": 10.02, "low": 9.99}]), 0)
+
+    def test_m1_buy_candle_blocks_htf_sell(self):
+        down = rising_bars(80, start=200, step=-0.5)
+        m1_up = rising_bars(30, start=100, step=0.4)
+        result = analyze_setup(down, down, down, m1_up, 20, 50, 11, 0.01)
+        self.assertNotEqual(result["signal"], "SELL")
+        self.assertIn("m1_against_trend", result["reasons"])
+
+    def test_reversal_zone_does_not_fade_alone(self):
         h1 = rising_bars(80, start=100, step=0.02)
         m15 = rising_bars(80, start=110, step=-0.02)
-        m5 = rising_bars(80, start=100, step=0.8)
+        m5 = rising_bars(70, start=100, step=-0.4)
+        m5.extend(rising_bars(12, start=float(m5[-1]["close"]), step=0.9))
+        for index, bar in enumerate(m5):
+            bar["time"] = 1_700_000_000 + index * 300
         result = analyze_setup(h1, m15, m5, [], 20, 50, 11, 0.01)
-        self.assertEqual(result["sell_groups"], 0)
-        if result["buy_score"] >= 2:
-            self.assertEqual(result["signal"], "BUY")
+        self.assertNotEqual(result["signal"], "SELL")
 
 
 if __name__ == "__main__":

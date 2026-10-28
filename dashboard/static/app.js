@@ -67,6 +67,7 @@ const WORDS = {
   position_already_open: "pozitsiya allaqachon ochiq",
   position_cap: "3 ta bitim chegarasi",
   daily_loss: "kunlik zarar chegarasi",
+  daily_target: "kunlik maqsad bajarildi",
   hard_drawdown: "cho'qqidan pasayish",
   account_not_connected: "hisob ulanmagan",
   session_closed: "sessiya yopiq",
@@ -98,8 +99,15 @@ function renderDay(day) {
   const data = day || {};
   setMoney("#day-profit", data.day_profit || 0, true);
   document.querySelector("#day-loss").textContent = money(data.day_loss || 0);
-  setMoney("#day-net", data.day_net || 0, true);
+  setMoney("#day-net", data.session_net != null ? data.session_net : data.day_net || 0, true);
   setMoney("#day-float", data.floating || 0, true);
+  const goal = document.querySelector("#day-goal-state");
+  if (goal) {
+    const mark = data.goal || "trade";
+    if (mark === "bank") goal.textContent = "foyda qulflandi";
+    else if (mark === "lock") goal.textContent = "+70 yetdi. Kun yopiq";
+    else goal.textContent = "yo'lda";
+  }
 
   const buy = document.querySelector("#side-buy");
   const sell = document.querySelector("#side-sell");
@@ -113,14 +121,10 @@ function renderDay(day) {
 }
 
 function renderGuard(risk, day) {
-  const cool = Number(risk && risk.cooldown_left) || 0;
-  const consec = Number(risk && risk.consec_losses) || 0;
   const closed = Number(day && day.closed_trades) || 0;
   const node = document.querySelector("#day-guard");
   const sub = document.querySelector("#day-closed");
-  if (cool > 0) node.textContent = `${cool}s pauza`;
-  else if (consec > 0) node.textContent = `${consec} ta minus ketma-ket`;
-  else node.textContent = "tayyor";
+  node.textContent = "tayyor";
   sub.textContent = `Yopilgan: ${closed}`;
 }
 
@@ -139,11 +143,13 @@ function renderRisk(risk) {
     <li class="risk-item"><span>Signal daraja</span><strong>${escapeHtml(data.grade || "skip")}</strong></li>
     <li class="risk-item"><span>Teskari masofa</span><strong>${escapeHtml(data.reverse_distance == null ? "—" : Number(data.reverse_distance).toFixed(2))}</strong></li>
     <li class="risk-item"><span>Kunlik zarar</span><strong>${escapeHtml(String(data.daily_loss_percent ?? "—"))}%</strong></li>
-    <li class="risk-item"><span>Ketma-ket zarar</span><strong>${escapeHtml(`${data.consec_losses ?? 0} / ${data.max_consec_losses ?? 2}`)}</strong></li>
-    <li class="risk-item"><span>Sessiya bitimlari</span><strong>${escapeHtml(`${data.session_trades ?? 0} / ${data.max_daily_trades ?? 20}`)}</strong></li>
-    <li class="risk-item"><span>Pauza</span><strong>${escapeHtml(cool > 0 ? `${cool}s` : "yo'q")}</strong></li>
+    <li class="risk-item"><span>Ketma-ket zarar</span><strong>${escapeHtml(String(data.consec_losses ?? 0))}</strong></li>
+    <li class="risk-item"><span>Sessiya bitimlari</span><strong>${escapeHtml(`${data.session_trades ?? 0} / ${data.max_daily_trades ?? 50}`)}</strong></li>
+    <li class="risk-item"><span>Sessiya sof</span><strong>${escapeHtml(data.session_net == null ? "—" : Number(data.session_net).toFixed(2))}</strong></li>
+    <li class="risk-item"><span>Maqsad</span><strong>${escapeHtml(`${data.day_lock ?? 70} / ${data.day_stretch ?? 90} / ${data.day_bank ?? 100}`)}</strong></li>
+    <li class="risk-item"><span>Pauza</span><strong>yo'q</strong></li>
     <li class="risk-item"><span>Pro stack</span><strong>${escapeHtml(`${data.pro_buy ?? 0} / ${data.pro_sell ?? 0}`)}</strong></li>
-    <li class="risk-note">Lot 0.01 / 0.05 / 0.50 / 1.00 faqat equity va signal kuchiga qarab. $1k da 0.50–1.00 ochilmaydi. CPI/PPI/NFP/FOMC oldidan yangi bitim yo'q.</li>
+    <li class="risk-note">Pauza yo'q. Foydada SL ni erta bezubitkaga qimirlatmaydi — qaytish yutgan bitimni urmasin. Trail ATR bo'yicha. +70/+90/+100 da kun qulflanadi.</li>
   `;
 }
 

@@ -48,6 +48,20 @@ def wilder_atr(bars: list[dict], period: int = 14) -> float | None:
     return atr
 
 
+def m1_candle_side(bars: list[dict], min_body: float = 0.05) -> int:
+    """Last closed M1 body. +1 BUY candle, -1 SELL candle, 0 doji."""
+    if not bars:
+        return 0
+    opened = float(bars[-1]["open"])
+    close = float(bars[-1]["close"])
+    body = close - opened
+    if body >= min_body:
+        return 1
+    if body <= -min_body:
+        return -1
+    return 0
+
+
 def m1_burst(bars: list[dict]) -> int:
     """Fast M1 side from the last three candles. Used for razgon scalping."""
     if len(bars) < 3:
@@ -227,6 +241,7 @@ def analyze_setup(
     m5_dir = trend_direction(m5)
     m1_dir = trend_direction(m1, ema_period=min(50, max(5, len(m1) // 2 or 5))) if len(m1) >= 8 else 0
     m1_fast = m1_burst(m1) if m1 else 0
+    m1_candle = m1_candle_side(m1) if m1 else 0
     up_votes = (1 if h1_dir > 0 else 0) + (1 if m15_dir > 0 else 0) + (1 if m5_dir > 0 else 0)
     down_votes = (1 if h1_dir < 0 else 0) + (1 if m15_dir < 0 else 0) + (1 if m5_dir < 0 else 0)
     context = 0
@@ -418,16 +433,19 @@ def analyze_setup(
     active_buy = (
         sell_groups == 0
         and trigger_buy
-        and buy_score >= 2
-        and (context == 0 or (context > 0 and pullback_buy))
+        and buy_score >= 4
+        and context > 0
+        and pullback_buy
+        and pro_buy >= 1
     )
     active_sell = (
         buy_groups == 0
         and trigger_sell
-        and sell_score >= 2
-        and (context == 0 or (context < 0 and pullback_sell))
+        and sell_score >= 4
+        and context < 0
+        and pullback_sell
+        and pro_sell >= 1
     )
-
     blocked = False
     signal = "WAIT"
     if spread_points > max_spread_points:
@@ -437,7 +455,9 @@ def analyze_setup(
     elif volatility == "expanded" and context == 0:
         reasons.append("volatility_expanded")
         blocked = True
-    elif volatility == "compressed" and not (squeeze_buy or squeeze_sell or active_buy or active_sell):
+    elif volatility == "compressed" and not (
+        squeeze_buy or squeeze_sell or active_buy or active_sell
+    ):
         reasons.append("volatility_compressed")
         blocked = True
     elif volatility not in ("normal", "compressed"):
@@ -447,12 +467,23 @@ def analyze_setup(
     elif not session_open(server_hour, weekday):
         reasons.append("session_closed")
         blocked = True
-    elif m1 and m1_dir != 0 and context != 0 and m1_dir != context:
-        reasons.append("m1_delay")
+    elif m1 and m1_candle != 0 and context != 0 and m1_candle != context:
+        reasons.append("m1_against_trend")
+        blocked = True
+
+    want_buy = classic_buy or elite_buy or squeeze_buy or continuation_buy or active_buy
+    want_sell = classic_sell or elite_sell or squeeze_sell or continuation_sell or active_sell
+    if m1:
+        if want_buy and m1_candle <= 0:
+            reasons.append("m1_not_buy_candle")
+            want_buy = False
+        if want_sell and m1_candle >= 0:
+            reasons.append("m1_not_sell_candle")
+            want_sell = False
 
     if not blocked and buy_groups > 0 and sell_groups > 0:
         reasons.append("directional_conflict")
-    elif not blocked and (classic_buy or elite_buy or squeeze_buy or continuation_buy or active_buy):
+    elif not blocked and want_buy:
         signal = "BUY"
         if squeeze_buy and not classic_buy:
             reasons.append("squeeze_breakout")
@@ -464,7 +495,7 @@ def analyze_setup(
             reasons.append("active_trigger")
         else:
             reasons.append("buy_thresholds")
-    elif not blocked and (classic_sell or elite_sell or squeeze_sell or continuation_sell or active_sell):
+    elif not blocked and want_sell:
         signal = "SELL"
         if squeeze_sell and not classic_sell:
             reasons.append("squeeze_breakout")
@@ -529,6 +560,7 @@ def analyze_setup(
         "last_m5_time": int(m5[-1]["time"]) if m5 else 0,
         "m1_dir": m1_dir,
         "m1_fast": m1_fast,
+        "m1_candle": m1_candle,
         "strategies": "confluence+pro",
     }
 
@@ -552,11 +584,11 @@ def protective_prices(is_buy: bool, bid: float, ask: float, stop_distance: float
 
 
 def equity_lot_cap(equity: float) -> float:
-    """Hard ceiling so a $1k gold book cannot open 0.50/1.00."""
+    """Hard ceiling so a ~$800 gold book stays on micro lots."""
     if equity < 1200:
-        return 0.05
+        return 0.01
     if equity < 2500:
-        return 0.10
+        return 0.05
     if equity < 5000:
         return 0.25
     if equity < 10000:
@@ -581,7 +613,11 @@ def setup_grade(analysis: dict) -> str:
         return "elite"
     if trending and score >= 4 and groups >= 2:
         return "swing"
-    if score >= 2:
+    direction = str(analysis.get("direction") or "flat")
+    aligned = (buy and direction == "up") or ((not buy) and direction == "down")
+    if aligned and score >= 4 and groups >= 2 and pro >= 1:
+        return "swing"
+    if aligned and score >= 4 and groups >= 2:
         return "scalp"
     return "skip"
 
@@ -606,11 +642,9 @@ def decide_lot(
     if news_near:
         risk *= 0.45
         used = "scalp"
-    if consec_losses >= 2:
-        risk *= 0.5
     cap = equity_lot_cap(equity)
     if used == "scalp":
-        cap = min(cap, 0.02 if equity < 2500 else 0.05)
+        cap = min(cap, 0.01 if equity < 2500 else 0.05)
     elif used == "swing":
         cap = min(cap, 0.10 if equity < 5000 else cap)
     vmax = min(volume_max, cap)
@@ -634,6 +668,12 @@ def decide_lot(
     return volume, reason, used
 
 
+def profit_to_distance(usd: float, volume: float, tick_size: float, tick_value: float) -> float:
+    if usd <= 0 or volume <= 0 or tick_size <= 0 or tick_value <= 0:
+        return 0.0
+    return usd * tick_size / (tick_value * volume)
+
+
 def order_allowed(
     armed: bool,
     connected: bool,
@@ -642,6 +682,7 @@ def order_allowed(
     volume: float,
     daily_loss_hit: bool,
     hard_stop: bool,
+    daily_profit_hit: bool = False,
 ) -> tuple[bool, str]:
     if not connected:
         return False, "account_not_connected"
@@ -649,9 +690,11 @@ def order_allowed(
         return False, "robot_stopped"
     if daily_loss_hit:
         return False, "daily_loss"
+    if daily_profit_hit:
+        return False, "daily_target"
     if hard_stop:
         return False, "hard_drawdown"
-    if open_positions >= 3:
+    if open_positions >= 1:
         return False, "position_already_open"
     if signal not in ("BUY", "SELL"):
         return False, "signal_not_actionable"

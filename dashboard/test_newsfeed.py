@@ -38,7 +38,7 @@ class NewsTests(unittest.TestCase):
 
 class LotTests(unittest.TestCase):
     def test_small_account_cannot_open_half_lot(self):
-        self.assertEqual(equity_lot_cap(967), 0.05)
+        self.assertEqual(equity_lot_cap(967), 0.01)
         self.assertEqual(equity_lot_cap(6000), 0.50)
         self.assertEqual(equity_lot_cap(12000), 1.00)
 
@@ -53,7 +53,7 @@ class LotTests(unittest.TestCase):
         self.assertEqual(reason, "ok")
         self.assertEqual(grade, "scalp")
         self.assertGreaterEqual(volume, 0.01)
-        self.assertLessEqual(volume, 0.02)
+        self.assertLessEqual(volume, 0.01)
 
     def test_elite_large_book_can_reach_half_or_full(self):
         half, reason, _ = decide_lot(6000, "elite", 1.2, 0.01, 1.0, 0.01, 100, 0.01, False, False, 0)

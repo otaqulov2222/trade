@@ -2,6 +2,9 @@ import unittest
 
 from straddle import (
     BREAK_EVEN,
+    DAY_PROFIT_BANK,
+    DAY_PROFIT_LOCK,
+    DAY_PROFIT_STRETCH,
     HARD_STOP,
     LOT_SCALP,
     LOT_SWING,
@@ -9,8 +12,10 @@ from straddle import (
     SCALP_BANK,
     SCALP_BE,
     TAKE_PROFIT,
+    daily_goal_action,
     adaptive_trail_distance,
     book_role,
+    crawl_after_be,
     lock_take_profit,
     original_position,
     pick_lock_stop,
@@ -22,6 +27,14 @@ from straddle import (
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_daily_goal_locks_at_seventy(self):
+        self.assertEqual(daily_goal_action(69.9, 69.9, False), "trade")
+        self.assertEqual(daily_goal_action(DAY_PROFIT_LOCK, 70.0, False), "lock")
+        self.assertEqual(daily_goal_action(75.0, 75.0, True), "trade")
+        self.assertEqual(daily_goal_action(70.0, 82.0, True), "bank")
+        self.assertEqual(daily_goal_action(DAY_PROFIT_STRETCH, 97.0, True), "bank")
+        self.assertEqual(daily_goal_action(DAY_PROFIT_BANK, 100.0, True), "bank")
+
     def test_hard_stop_on_buy(self):
         stop = position_stop("BUY", 4121.0, 4121.24, 0.0, 4121.18, HARD_STOP, 0.05, 0.0)
         self.assertAlmostEqual(stop, 4121.18 - HARD_STOP)
@@ -75,6 +88,23 @@ class ProtectionTests(unittest.TestCase):
 
     def test_small_profit_does_not_move_stop(self):
         stop = pick_lock_stop("SELL", 4014.802, 4014.50, 4014.70, 4016.602, BREAK_EVEN, 0.80, 0.05, 0.05)
+        self.assertIsNone(stop)
+
+    def test_after_be_extends_tp_slowly_on_buy(self):
+        sl, tp = crawl_after_be("BUY", 4017.60, 4019.20, 4019.44, 4018.03, 4020.60, 1.20, 0.05, 0.05)
+        self.assertIsNone(sl)
+        self.assertIsNotNone(tp)
+        self.assertGreater(tp, 4020.60)
+        self.assertLessEqual(tp, 4020.65 + 1e-9)
+
+    def test_after_be_crawls_sl_when_buy_runs(self):
+        sl, tp = crawl_after_be("BUY", 4017.60, 4019.80, 4020.04, 4018.03, 4020.60, 1.20, 0.05, 0.05)
+        self.assertIsNotNone(sl)
+        self.assertGreater(sl, 4018.03)
+        self.assertLessEqual(sl, 4018.08 + 1e-9)
+
+    def test_spread_noise_does_not_break_even(self):
+        stop = pick_lock_stop("SELL", 4014.80, 4014.26, 4014.50, 4016.00, 0.20, 0.35, 0.05, 0.05)
         self.assertIsNone(stop)
 
     def test_scalp_banks_small_profit(self):

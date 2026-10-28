@@ -44,6 +44,34 @@ class Broker:
         except Exception:
             self.last_error = "MetaTrader 5 kutubxonasi yo'q"
 
+    def attach_open_terminal(self, symbol: str = "XAUUSDm") -> tuple[bool, str, dict]:
+        """Reuse the already-logged MT5 session. Password is never read."""
+        if not self.available or self.mt5 is None:
+            self.connected = False
+            return False, "MetaTrader kutubxonasi yo'q", {}
+        if not self.terminal_path:
+            self.connected = False
+            return False, "MetaTrader terminali o'rnatilmagan", {}
+        mt5 = self.mt5
+        if not mt5.initialize(path=self.terminal_path, timeout=20000):
+            self.connected = False
+            code, message = mt5.last_error()
+            return False, f"Terminal ochilmadi ({code} {message})", {}
+        info = mt5.account_info()
+        if info is None:
+            self.connected = False
+            return False, "MT5 da hisob ochiq emas", {}
+        resolved = resolve_gold_symbol(mt5, symbol)
+        if not resolved:
+            self.connected = False
+            return False, "Oltin symbol topilmadi. Exnessda XAUUSDm yozing.", {}
+        self.symbol = resolved
+        self.connected = True
+        note = "Hisob ulandi"
+        if resolved != symbol.strip():
+            note = f"Hisob ulandi. Symbol {resolved}"
+        return True, note, self.account_snapshot()
+
     def connect(self, login: int, password: str, server: str, symbol: str) -> tuple[bool, str, dict]:
         if not self.available or self.mt5 is None:
             self.connected = False

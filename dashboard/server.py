@@ -12,10 +12,21 @@ from urllib.parse import urlparse
 
 from broker import Broker
 from newsfeed import snapshot as news_snapshot
-from engine import analyze_setup, decide_lot, equity_lot_cap, order_allowed, protective_prices, setup_grade
+from engine import (
+    analyze_setup,
+    decide_lot,
+    equity_lot_cap,
+    order_allowed,
+    profit_to_distance,
+    protective_prices,
+    setup_grade,
+)
 from straddle import (
     BREAK_EVEN,
     COOLDOWN_SECONDS,
+    DAY_PROFIT_BANK,
+    DAY_PROFIT_LOCK,
+    DAY_PROFIT_STRETCH,
     HARD_STOP,
     HEDGE,
     LOSS_PAUSE_SECONDS,
@@ -31,8 +42,10 @@ from straddle import (
     STEP,
     TAKE_PROFIT,
     book_role,
+    daily_goal_action,
     normalize,
     original_position,
+    crawl_after_be,
     pick_lock_stop,
     reverse_should_move,
     reverse_stop_price,
@@ -87,6 +100,8 @@ state = {
     "last_realized": 0.0,
     "session_start_realized": 0.0,
     "session_trades": 0,
+    "session_peak_net": 0.0,
+    "daily_goal": "trade",
     "journal": [],
     "analysis": empty_analysis(),
     "message": "Hisob ulanmagan",
@@ -118,6 +133,12 @@ def public_state() -> dict:
     if broker.connected:
         positions = broker.positions(MAGIC) + broker.pending_orders(MAGIC)
         day = broker.day_stats(MAGIC, state["day_start_equity"])
+        session_net = float(day.get("day_net") or 0.0)
+        day["session_net"] = round(session_net, 2)
+        day["goal"] = state.get("daily_goal") or "trade"
+        day["target"] = DAY_PROFIT_LOCK
+        day["stretch"] = DAY_PROFIT_STRETCH
+        day["bank"] = DAY_PROFIT_BANK
     return {
         "mt5_available": broker.available,
         "connected": broker.connected,
@@ -135,7 +156,7 @@ def public_state() -> dict:
             "take_profit": TAKE_PROFIT,
             "break_even": BREAK_EVEN,
             "lot": LOT_SCALP,
-            "lot_swing": LOT_SWING,
+            "lot_swing": min(LOT_SWING, equity_lot_cap(float(account.get("equity") or 0.0))),
             "lot_scalp": LOT_SCALP,
             "reverse_distance": REVERSE_DISTANCE,
             "max_spread": MAX_SPREAD,
@@ -148,10 +169,15 @@ def public_state() -> dict:
             "session_trades": state["session_trades"],
             "consec_losses": state["consec_losses"],
             "cooldown_left": max(0, int(float(state["cooldown_until"]) - time.time())),
-            "one_side_only": False,
-            "mode": "swing+m1-straddle",
+            "one_side_only": True,
+            "mode": "daily-70-90-100",
             "martingale": False,
             "grid": False,
+            "day_lock": DAY_PROFIT_LOCK,
+            "day_stretch": DAY_PROFIT_STRETCH,
+            "day_bank": DAY_PROFIT_BANK,
+            "session_net": round(float(day.get("session_net") or 0.0), 2),
+            "daily_goal": state.get("daily_goal") or "trade",
             "pro_buy": int((state.get("analysis") or {}).get("pro_buy") or 0),
             "pro_sell": int((state.get("analysis") or {}).get("pro_sell") or 0),
             "lot_cap": equity_lot_cap(float(account.get("equity") or 0.0)),
@@ -220,12 +246,12 @@ def protect_swing_levels(rows: list[dict], quote: dict) -> None:
         tp = float(row["tp"] or 0)
         if row["type"] == "BUY":
             want_sl = entry - dist
-            want_tp = entry + dist * 1.6 if tp <= 0 or tp > entry + dist * 2.2 else tp
+            want_tp = tp if tp > 0 else entry + dist * 2.2
             if sl > 0 and want_sl <= sl + STEP:
                 continue
         else:
             want_sl = entry + dist
-            want_tp = entry - dist * 1.6 if tp <= 0 or tp < entry - dist * 2.2 else tp
+            want_tp = tp if tp > 0 else entry - dist * 2.2
             if sl > 0 and want_sl >= sl - STEP:
                 continue
         want_sl = normalize(want_sl, tick, digits)
@@ -246,32 +272,58 @@ def trail_position_stops(positions: list[dict], quote: dict, min_stop: float) ->
         if row["type"] not in ("BUY", "SELL"):
             continue
         role = book_role(row)
-        trigger = SCALP_BE if role == "scalp" else BREAK_EVEN
-        trail_gap = SCALP_STOP if role == "scalp" else min(0.80, HARD_STOP)
+        atr = float((state.get("analysis") or {}).get("atr") or 0.0)
+        spread = max(0.0, ask - bid)
+        trigger = max(SCALP_BE if role == "scalp" else BREAK_EVEN, spread * 2.5)
+        if atr > 0:
+            trigger = max(trigger, atr * 0.22)
+        trail_gap = max(0.90, atr * 0.45) if atr > 0 else HARD_STOP
+        if role != "scalp":
+            trail_gap = max(trail_gap, 1.10)
         entry = float(row["price_open"])
         current_sl = float(row["sl"] or 0)
-        raw = pick_lock_stop(
-            row["type"],
-            entry,
-            bid,
-            ask,
-            current_sl,
-            trigger,
-            trail_gap,
-            min_stop,
-            STEP,
+        current_tp = float(row["tp"] or 0)
+        locked = (
+            (row["type"] == "BUY" and current_sl + 1e-9 >= entry)
+            or (row["type"] == "SELL" and 0 < current_sl <= entry + 1e-9)
         )
-        if raw is None:
+        stop = current_sl
+        tp = current_tp
+        note = ""
+        if locked:
+            crawl_sl, crawl_tp = crawl_after_be(
+                row["type"], entry, bid, ask, current_sl, current_tp, trail_gap, min_stop, STEP,
+            )
+            if crawl_sl is None and crawl_tp is None:
+                continue
+            if crawl_sl is not None:
+                stop = crawl_sl
+            if crawl_tp is not None:
+                tp = crawl_tp
+            note = "trail"
+        else:
+            raw = pick_lock_stop(
+                row["type"],
+                entry,
+                bid,
+                ask,
+                current_sl,
+                trigger,
+                trail_gap,
+                min_stop,
+                STEP,
+            )
+            if raw is None:
+                continue
+            stop = raw
+            note = "bezubitka"
+        stop = normalize(stop, tick, digits) if stop > 0 else current_sl
+        tp = normalize(tp, tick, digits) if tp > 0 else current_tp
+        if abs(stop - current_sl) < 1e-9 and abs(tp - current_tp) < 1e-9:
             continue
-        stop = normalize(raw, tick, digits)
-        tp = float(row["tp"] or 0)
         ok, reason = broker.move_position_sl(int(row["ticket"]), stop, tp)
         if ok:
-            locked = "bezubitka" if (
-                (row["type"] == "BUY" and stop + 1e-9 >= entry) or
-                (row["type"] == "SELL" and stop <= entry + 1e-9)
-            ) else "trail"
-            report(f"{row['type']} SL {stop:.3f} ({locked})")
+            report(f"{row['type']} SL {stop:.3f} TP {tp:.3f} ({note})")
         elif "10026" not in reason and "10016" not in reason:
             report(f"{row['type']} SL {reason}")
 
@@ -282,17 +334,15 @@ def note_flat_result() -> None:
     delta = realized - float(state["last_realized"])
     state["last_realized"] = realized
     state["session_trades"] = int(state["session_trades"]) + 1
-    state["last_order_bar"] = 0
     state["cooldown_until"] = 0.0
+    state["last_order_bar"] = 0
     if delta < -1e-9:
         state["consec_losses"] = int(state["consec_losses"]) + 1
-        state["cooldown_until"] = time.time() + LOSS_PAUSE_SECONDS
-        report("Bitim minusda yopildi. Yangi sham kutiladi")
+        report("Bitim minusda yopildi")
         return
     if delta > 1e-9:
         state["consec_losses"] = 0
-        state["cooldown_until"] = max(float(state["cooldown_until"]), time.time() + COOLDOWN_SECONDS)
-        report("Bitim plusda. Sifatli signal kutiladi")
+        report("Bitim plusda")
         return
     report("Bitim yopildi")
 
@@ -328,12 +378,15 @@ def close_rows(rows: list[dict], text: str) -> bool:
 
 
 def strong_signal(analysis: dict) -> bool:
-    """Trust engine BUY/SELL — one-side trigger with stop is enough to send."""
+    """Graded one-side setup. Scalp (reversal) may fire at score 2; swing needs 4."""
+    if analysis.get("grade") in (None, "", "skip"):
+        return False
     signal = analysis.get("signal")
+    need = 2 if analysis.get("grade") == "scalp" else 4
     if signal == "BUY":
-        return int(analysis.get("sell_groups") or 0) == 0 and int(analysis.get("buy_score") or 0) >= 2
+        return int(analysis.get("sell_groups") or 0) == 0 and int(analysis.get("buy_score") or 0) >= need
     if signal == "SELL":
-        return int(analysis.get("buy_groups") or 0) == 0 and int(analysis.get("sell_score") or 0) >= 2
+        return int(analysis.get("buy_groups") or 0) == 0 and int(analysis.get("sell_score") or 0) >= need
     return False
 
 
@@ -343,6 +396,15 @@ def split_book(positions: list[dict]) -> tuple[list[dict], list[dict]]:
     return swing, scalp
 
 
+def m1_allows(analysis: dict, side: str) -> bool:
+    candle = int(analysis.get("m1_candle") or 0)
+    if side == "BUY":
+        return candle > 0
+    if side == "SELL":
+        return candle < 0
+    return False
+
+
 def swing_side(analysis: dict) -> str | None:
     if analysis.get("news_block"):
         return None
@@ -350,13 +412,13 @@ def swing_side(analysis: dict) -> str | None:
     buy = int(analysis.get("buy_score") or 0)
     sell = int(analysis.get("sell_score") or 0)
     signal = analysis.get("signal")
-    if signal == "BUY" and strong_signal(analysis) and sell == 0:
+    if signal == "BUY" and strong_signal(analysis) and sell == 0 and m1_allows(analysis, "BUY"):
         return "BUY"
-    if signal == "SELL" and strong_signal(analysis) and buy == 0:
+    if signal == "SELL" and strong_signal(analysis) and buy == 0 and m1_allows(analysis, "SELL"):
         return "SELL"
-    if htf == "down" and sell >= 4 and sell > buy:
+    if htf == "down" and sell >= 4 and sell > buy and m1_allows(analysis, "SELL"):
         return "SELL"
-    if htf == "up" and buy >= 4 and buy > sell:
+    if htf == "up" and buy >= 4 and buy > sell and m1_allows(analysis, "BUY"):
         return "BUY"
     return None
 
@@ -364,17 +426,11 @@ def swing_side(analysis: dict) -> str | None:
 def scalp_side(analysis: dict) -> str | None:
     if analysis.get("news_block"):
         return None
+    if analysis.get("grade") in (None, "", "skip"):
+        return None
     signal = analysis.get("signal")
-    if signal in ("BUY", "SELL"):
+    if signal in ("BUY", "SELL") and strong_signal(analysis) and m1_allows(analysis, str(signal)):
         return str(signal)
-    fast = int(analysis.get("m1_fast") or 0)
-    htf = analysis.get("direction")
-    buy = int(analysis.get("buy_score") or 0)
-    sell = int(analysis.get("sell_score") or 0)
-    if fast > 0 and (htf == "up" or (buy >= 2 and buy > sell)):
-        return "BUY"
-    if fast < 0 and (htf == "down" or (sell >= 2 and sell > buy)):
-        return "SELL"
     return None
 
 
@@ -391,17 +447,31 @@ def scalp_ready_to_bank(row: dict, quote: dict) -> bool:
     return move >= SCALP_BANK or float(row["profit"]) >= SCALP_BANK
 
 
-def send_entry(is_buy: bool, volume: float, quote: dict, analysis: dict, comment: str) -> tuple[bool, str]:
+def send_entry(
+    is_buy: bool,
+    volume: float,
+    quote: dict,
+    analysis: dict,
+    comment: str,
+    remain_usd: float = DAY_PROFIT_LOCK,
+) -> tuple[bool, str]:
     atr = float(analysis.get("atr") or 0.0)
     spread = max(0.0, float(quote["ask"]) - float(quote["bid"]))
+    tick_size = float(quote.get("tick") or 0.01)
+    tick_value = float(quote.get("tick_value") or 1.0)
+    money_dist = profit_to_distance(max(remain_usd, DAY_PROFIT_LOCK), volume, tick_size, tick_value)
     if "swing" in comment:
         atr_part = atr * 0.85 if atr > 0 else HARD_STOP
         stop_distance = max(HARD_STOP, spread * 3.0, float(quote.get("stops") or 0), atr_part)
         stop_distance = min(stop_distance, 1.80)
-        reward = 1.6
+        target = min(8.0, max(stop_distance * 2.2, money_dist))
+        reward = target / stop_distance if stop_distance > 0 else 2.2
     else:
-        stop_distance = max(SCALP_STOP, spread * 2.5, float(quote.get("stops") or 0))
-        reward = 1.0
+        atr_part = atr * 0.40 if atr > 0 else SCALP_STOP
+        stop_distance = max(SCALP_STOP, spread * 2.5, float(quote.get("stops") or 0), atr_part)
+        stop_distance = min(stop_distance, HARD_STOP)
+        target = min(3.0, max(stop_distance * 2.2, money_dist))
+        reward = target / stop_distance if stop_distance > 0 else 2.2
     prices = protective_prices(is_buy, float(quote["bid"]), float(quote["ask"]), stop_distance, reward)
     if prices is None:
         return False, "SL/TP narxi yaroqsiz"
@@ -517,7 +587,11 @@ def evaluate_once() -> None:
         if analysis.get("signal") in ("BUY", "SELL"):
             analysis["signal"] = "WAIT"
     analysis["grade"] = setup_grade(analysis)
-    stop_for_lot = SCALP_STOP if analysis["grade"] == "scalp" else HARD_STOP
+    atr_now = float(analysis.get("atr") or 0.0)
+    if analysis["grade"] == "scalp":
+        stop_for_lot = min(HARD_STOP, max(SCALP_STOP, atr_now * 0.40 if atr_now > 0 else SCALP_STOP))
+    else:
+        stop_for_lot = HARD_STOP
     lot, lot_reason, used_grade = decide_lot(
         equity,
         analysis["grade"],
@@ -566,6 +640,18 @@ def evaluate_once() -> None:
         report("Savdo cheklovi. Robot to'xtadi")
         return
 
+    day = broker.day_stats(MAGIC, state["day_start_equity"])
+    session_net = float(day.get("day_net") or 0.0)
+    state["session_peak_net"] = max(float(state.get("session_peak_net") or 0.0), session_net)
+    goal = daily_goal_action(session_net, float(state["session_peak_net"]), bool(positions))
+    state["daily_goal"] = goal
+    if goal == "bank" and positions:
+        close_rows(positions, f"Kunlik ${session_net:.0f}. Foyda qulflandi")
+        return
+    if goal in ("lock", "bank") and not positions:
+        state["message"] = f"Kunlik maqsad ${session_net:.0f}. Yangi bitim yo'q"
+        return
+
     if positions:
         state["had_position"] = True
         update_profit_peaks(positions)
@@ -576,12 +662,6 @@ def evaluate_once() -> None:
             ok, reason = broker.close_position(int(original["ticket"]))
             name = original["type"]
             report(f"Teskari limit oldi. Asl {name} yopildi" if ok else f"Yopish xato: {reason}")
-            return
-        banked = [row for row in scalp_rows if scalp_ready_to_bank(row, quote)]
-        if banked:
-            if close_rows(banked, "M1 foyda olindi. Keyingi sifatli signal kutiladi"):
-                state["consec_losses"] = 0
-                state["cooldown_until"] = time.time() + COOLDOWN_SECONDS
             return
         blown = []
         cap = 1.80
@@ -611,9 +691,6 @@ def evaluate_once() -> None:
         protect_swing_levels(swing_rows, quote)
         trail_position_stops(positions, quote, min_stop)
         broker.cancel_magic_orders(MAGIC)
-        if swing_rows and want_swing and want_swing != swing_rows[0]["type"]:
-            if close_rows(swing_rows, f"HTF o'zgardi. {swing_rows[0]['type']} swing yopildi"):
-                return
         bits = []
         if swing_rows:
             bits.append(f"swing {swing_rows[0]['type']} {swing_rows[0]['volume']:.2f}")
@@ -638,7 +715,6 @@ def evaluate_once() -> None:
         if not positions:
             state["message"] = analysis.get("news_reason") or "Yangilik. Yangi bitim yo'q"
         return
-    day = broker.day_stats(MAGIC, state["day_start_equity"])
     start_eq = float(state["day_start_equity"] or equity)
     realized = float(day.get("day_realized") or 0.0)
     session_pnl = realized - float(state.get("session_start_realized") or 0.0)
@@ -647,19 +723,10 @@ def evaluate_once() -> None:
         if not positions:
             state["message"] = "Bugungi minus limiti. Yangi bitim yopiq"
         return
-    if time.time() < float(state["cooldown_until"]):
-        if not positions:
-            left = max(0, int(float(state["cooldown_until"]) - time.time()))
-            state["message"] = f"Pauza {left}s. Sifatli signal kutiladi"
-        return
 
     if positions:
         return
 
-    m5_time = int(analysis.get("last_m5_time") or 0)
-    if m5_time and m5_time == int(state.get("last_order_bar") or 0):
-        state["message"] = "Yangi M5 kutiladi"
-        return
     if int(state["session_trades"]) >= MAX_DAILY_TRADES:
         state["message"] = f"Sessiya {MAX_DAILY_TRADES} bitim limiti"
         return
@@ -675,8 +742,10 @@ def evaluate_once() -> None:
         state["analysis"] = analysis
         return
 
-    lot = 0.02 if int(state["consec_losses"]) == 0 and analysis.get("grade") in ("swing", "elite") else 0.01
-    lot = max(float(quote.get("volume_min") or 0.01), min(lot, 0.02))
+    lot = float(analysis.get("volume") or 0.0)
+    grade = str(analysis.get("grade") or "skip")
+    comment = "sd-swing" if grade in ("swing", "elite") else "sd-m1"
+    remain = max(0.0, DAY_PROFIT_LOCK - session_net)
     is_buy = want == "BUY"
     allowed, gate = order_allowed(
         state["running"],
@@ -686,6 +755,7 @@ def evaluate_once() -> None:
         lot,
         daily_loss_hit,
         False,
+        goal in ("lock", "bank"),
     )
     analysis["gate"] = gate
     analysis["volume"] = lot
@@ -693,8 +763,8 @@ def evaluate_once() -> None:
     if not allowed:
         state["message"] = gate
         return
-    ok, reason = send_entry(is_buy, lot, quote, analysis, "sd-m1")
-    state["last_order_bar"] = m5_time
+    ok, reason = send_entry(is_buy, lot, quote, analysis, comment, remain)
+    state["last_order_bar"] = int(analysis.get("last_m5_time") or 0)
     if ok:
         state["had_position"] = True
         report(f"{want} {lot:.2f} ochildi")
@@ -828,12 +898,14 @@ class Handler(BaseHTTPRequestHandler):
                 state["session_start_realized"] = realized
                 state["last_realized"] = realized
                 state["session_trades"] = 0
+                state["session_peak_net"] = 0.0
+                state["daily_goal"] = "trade"
                 state["consec_losses"] = 0
                 state["cooldown_until"] = 0.0
                 state["last_order_bar"] = 0
                 state["had_position"] = bool(broker.magic_positions(MAGIC))
                 state["running"] = True
-                state["message"] = "Saydirasulov ishga tushdi. Hozirdan ochadi"
+                state["message"] = "Saydirasulov ishga tushdi. Maqsad +70 / +90 / +100"
                 journal("Saydirasulov ishga tushdi. Hozirdan bitim ochadi")
                 evaluate_once()
                 snapshot = public_state()
@@ -851,8 +923,30 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"ok": False, "message": "topilmadi"})
 
 
+def bind_open_account() -> None:
+    ok, message, account = broker.attach_open_terminal()
+    if not ok:
+        state["message"] = "Hisob ulanmagan. Sozlamadan ulang."
+        return
+    equity = account.get("equity")
+    if equity is not None:
+        state["day_start_equity"] = equity
+        state["equity_peak"] = equity
+    day = broker.day_stats(MAGIC, state["day_start_equity"])
+    state["last_realized"] = float(day.get("day_realized") or 0.0)
+    state["had_position"] = bool(broker.magic_positions(MAGIC))
+    state["running"] = False
+    state["message"] = message
+    journal(f"Hisob ulandi login={account.get('login')} server={account.get('server')}")
+    try:
+        evaluate_once()
+    except Exception:
+        pass
+
+
 def main() -> None:
     news_snapshot()
+    bind_open_account()
     worker = threading.Thread(target=loop, daemon=True)
     worker.start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
